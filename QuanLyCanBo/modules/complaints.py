@@ -1,14 +1,11 @@
 # -*- coding: utf-8 -*-
 """Module: Đơn thư, khiếu nại, tố cáo liên quan đến cán bộ."""
-import csv
-import datetime
-
 from PySide6.QtWidgets import QLineEdit
 
 from core import attachments
 from ui.theme import C
 from ui.widgets import (DateField, EmployeePicker, FilePicker, FormDialog, ListPage, SearchDialog, ask, choice,
-                        date_key, info, save_file_dialog, sql_date_key, text_edit, valid_date, warn)
+                        date_key, sql_date_key, text_edit, valid_date, warn)
 
 MODULE_ID = "complaints"
 TABLE = "don_thu"
@@ -17,6 +14,9 @@ TRANG_THAI_OPTIONS = ["Mới tiếp nhận", "Đang xác minh", "Đang xử lý"
 COLS = [("tieu_de", "Tiêu đề", 200), ("loai", "Loại", 90), ("ho_ten", "Cán bộ liên quan", 150),
         ("nguoi_gui", "Người gửi", 120), ("ngay_nhan", "Ngày nhận", 100), ("trang_thai", "Trạng thái", 120),
         ("ngay_giai_quyet", "Ngày giải quyết", 110), ("file_dinh_kem", "File", 70)]
+EXPORT_COLS = [("tieu_de", "Tiêu đề"), ("loai", "Loại"), ("ho_ten", "Cán bộ liên quan"), ("nguoi_gui", "Người gửi"),
+               ("ngay_nhan", "Ngày nhận"), ("noi_dung", "Nội dung"), ("trang_thai", "Trạng thái"),
+               ("ngay_giai_quyet", "Ngày giải quyết"), ("ket_qua", "Kết quả xử lý")]
 
 
 class Panel(ListPage):
@@ -29,7 +29,11 @@ class Panel(ListPage):
         self.add_action("🗑  Xóa", self.on_delete, "danger", perm="delete", needs_selection=True)
         self.add_action("📎  Mở file đính kèm", self.open_attachment, needs_selection=True,
                         check=lambda r: r and r.get("file_dinh_kem"))
-        self.add_action("📤  Xuất CSV", self.export_csv, perm="export", right=True)
+        self.add_action("📊  Xuất Excel", lambda: self.export_excel(
+            "Danh sách đơn thư - khiếu nại", "don_thu_khieu_nai", columns=EXPORT_COLS), perm="export", right=True)
+        self.add_action("🖨  In PDF", lambda: self.print_pdf(
+            "Danh sách đơn thư - khiếu nại", "don_thu_khieu_nai",
+            columns=[c for c in EXPORT_COLS if c[0] not in ("noi_dung", "ket_qua")]), perm="export", right=True)
         self.table.set_display("file_dinh_kem", lambda v, r: "📎 Có" if v else "—")
         self.table.set_row_color(lambda r: C["green"] if r["trang_thai"] == "Đã giải quyết"
                                  else (C["red"] if r["trang_thai"] == "Tồn đọng" else None))
@@ -106,25 +110,6 @@ class Panel(ListPage):
         self.db.log(self.app.user["username"], "Xóa đơn thư/khiếu nại", row["tieu_de"])
         self.app.set_status("Đã xóa đơn thư.")
         self.refresh()
-
-    def export_csv(self):
-        if self.deny("export"):
-            return
-        path = save_file_dialog(self, datetime.datetime.now().strftime("don_thu_khieu_nai_%Y%m%d.csv"))
-        if not path:
-            return
-        rows = self.table.rows()
-        with open(path, "w", newline="", encoding="utf-8-sig") as f:
-            w = csv.writer(f)
-            w.writerow(["Tiêu đề", "Loại", "Cán bộ liên quan", "Người gửi", "Ngày nhận", "Nội dung", "Trạng thái",
-                        "Ngày giải quyết", "Kết quả", "Ghi chú"])
-            for r in rows:
-                w.writerow([r["tieu_de"], r["loai"], r["ho_ten"] or "", r["nguoi_gui"] or "", r["ngay_nhan"] or "",
-                            r["noi_dung"] or "", r["trang_thai"], r["ngay_giai_quyet"] or "", r["ket_qua"] or "",
-                            r["ghi_chu"] or ""])
-        self.db.log(self.app.user["username"], "Xuất CSV", f"{len(rows)} bản ghi (đơn thư)")
-        info(self, f"Đã xuất file:\n{path}", "Xuất CSV")
-
 
 class EntryDialog(FormDialog):
     def __init__(self, panel, row):

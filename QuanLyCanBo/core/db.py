@@ -201,6 +201,12 @@ class Database:
         # v4.0: đơn vị chọn theo cơ cấu Công an tỉnh -> Phòng / CA xã, phường -> Đội / Tổ
         if "cong_an_tinh" not in self._cols("can_bo"):
             self.conn.execute("ALTER TABLE can_bo ADD COLUMN cong_an_tinh TEXT")
+        # v4.1: ảnh thẻ; lý do khi hệ số lương khác bảng theo cấp bậc (ngoại lệ)
+        for col in ("anh_the", "ly_do_he_so"):
+            if col not in self._cols("can_bo"):
+                self.conn.execute(f"ALTER TABLE can_bo ADD COLUMN {col} TEXT")
+        if "ly_do_ngoai_le" not in self._cols("qua_trinh_luong"):
+            self.conn.execute("ALTER TABLE qua_trinh_luong ADD COLUMN ly_do_ngoai_le TEXT")
         # v3.9: nâng lương và thăng cấp là MỘT quyết định - thêm hệ số lương
         # mới và người ký bên cạnh cấp bậc mới.
         have_ql = self._cols("qua_trinh_luong")

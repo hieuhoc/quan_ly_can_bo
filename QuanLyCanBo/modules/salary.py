@@ -6,23 +6,38 @@ ghi là một quyết định, ghi cấp bậc mới và hệ số lương mới
 thể chỉ thay đổi một trong hai). Tất cả nằm trong một bảng, quyết định mới
 nhất lên đầu. Dữ liệu từ bản cũ (loại "Nâng lương định kỳ / trước hạn",
 "Thăng cấp bậc hàm") vẫn hiển thị nguyên như trước trong cột Hình thức."""
-import csv
-import datetime
-
 from PySide6.QtWidgets import QCheckBox, QLineEdit
 
 from core import attachments, cand_data
 from ui.widgets import (DateField, EmployeePicker, FilePicker, FormDialog, ListPage, SearchDialog, SuggestCombo,
-                        ask, choice, date_key, info, label, save_file_dialog, sql_date_key, text_edit, valid_date,
-                        warn)
+                        ask, choice, date_key, label, sql_date_key, text_edit, valid_date, warn)
 
 MODULE_ID = "salary"
 TABLE = "qua_trinh_luong"
-HINH_THUC = ["Định kỳ", "Trước hạn"]
+HINH_THUC = ["Định kỳ", "Trước hạn", "Khác"]
+HINH_THUC_KHAC = "Khác"
 COLS = [("ma_cb", "Mã CB", 80), ("ho_ten", "Cán bộ", 160), ("loai", "Hình thức", 100),
         ("ngay_quyet_dinh", "Ngày QĐ", 100), ("so_quyet_dinh", "Số quyết định", 130),
         ("cap_bac_moi", "Cấp bậc mới", 110), ("he_so_luong_moi", "Hệ số lương mới", 120),
-        ("nguoi_ky", "Người ký", 130), ("noi_dung", "Nội dung", 180), ("file_dinh_kem", "File", 70)]
+        ("nguoi_ky", "Người ký", 130), ("ly_do_ngoai_le", "Lý do (ngoài quy định)", 180),
+        ("noi_dung", "Nội dung", 180), ("file_dinh_kem", "File", 70)]
+
+
+def ngoai_quy_dinh(hinh_thuc, cap_bac, he_so):
+    """Trả về mô tả điểm khác quy định (cần ghi lý do), hoặc None nếu đúng quy định:
+    - hình thức "Khác";
+    - hệ số lương không khớp bảng hệ số theo cấp bậc (Nghị định 204/2004/NĐ-CP)."""
+    reasons = []
+    if hinh_thuc == HINH_THUC_KHAC:
+        reasons.append("hình thức Khác")
+    chuan = cand_data.HE_SO_LUONG_THEO_CAP_BAC.get(cap_bac or "")
+    if chuan and he_so:
+        try:
+            if abs(float(he_so) - float(chuan)) > 1e-9:
+                reasons.append(f"hệ số {he_so} khác hệ số theo cấp bậc {cap_bac} ({chuan})")
+        except ValueError:
+            pass
+    return "; ".join(reasons) or None
 
 
 class Panel(ListPage):
@@ -36,8 +51,16 @@ class Panel(ListPage):
         self.add_action("🗑  Xóa", self.on_delete, "danger", perm="delete", needs_selection=True)
         self.add_action("📎  Mở file đính kèm", self.open_attachment, needs_selection=True,
                         check=lambda r: r and r.get("file_dinh_kem"))
-        self.add_action("📤  Xuất CSV", self.export_csv, perm="export", right=True)
+        self.add_action("📊  Xuất Excel", lambda: self.export_excel(
+            "Danh sách quyết định nâng lương - thăng cấp bậc hàm", "nang_luong_thang_cap",
+            columns=[(k, lbl) for k, lbl, _w in COLS if k != "file_dinh_kem"]), perm="export", right=True)
+        self.add_action("🖨  In PDF", lambda: self.print_pdf(
+            "Danh sách quyết định nâng lương - thăng cấp bậc hàm", "nang_luong_thang_cap",
+            columns=[(k, lbl) for k, lbl, _w in COLS if k not in ("file_dinh_kem", "noi_dung")]),
+            perm="export", right=True)
         self.table.set_display("file_dinh_kem", lambda v, r: "📎 Có" if v else "—")
+        from ui.theme import C
+        self.table.set_row_color(lambda r: C["amber"] if r.get("ly_do_ngoai_le") else None)
         self.table.activated_row.connect(self.open_edit)
         self.table.delete_pressed.connect(self.on_delete)
         self.refresh()
@@ -109,25 +132,6 @@ class Panel(ListPage):
         self.app.set_status("Đã xóa quyết định.")
         self.refresh()
 
-    def export_csv(self):
-        if self.deny("export"):
-            return
-        path = save_file_dialog(self, datetime.datetime.now().strftime("nang_luong_thang_cap_%Y%m%d.csv"))
-        if not path:
-            return
-        rows = self.table.rows()
-        with open(path, "w", newline="", encoding="utf-8-sig") as f:
-            w = csv.writer(f)
-            w.writerow(["Mã cán bộ", "Họ và tên", "Hình thức", "Ngày quyết định", "Số quyết định", "Cấp bậc mới",
-                        "Hệ số lương mới", "Người ký", "Nội dung", "Ghi chú"])
-            for r in rows:
-                w.writerow([r["ma_cb"], r["ho_ten"], r["loai"], r["ngay_quyet_dinh"] or "", r["so_quyet_dinh"] or "",
-                            r["cap_bac_moi"] or "", r["he_so_luong_moi"] or "", r["nguoi_ky"] or "",
-                            r["noi_dung"] or "", r["ghi_chu"] or ""])
-        self.db.log(self.app.user["username"], "Xuất CSV", f"{len(rows)} bản ghi (nâng lương - thăng cấp)")
-        info(self, f"Đã xuất file:\n{path}", "Xuất CSV")
-
-
 class EntryDialog(FormDialog):
     """Thêm / sửa MỘT quyết định nâng lương - thăng cấp bậc hàm."""
 
@@ -146,6 +150,12 @@ class EntryDialog(FormDialog):
         self.e_ky = QLineEdit(r.get("nguoi_ky") or "")
         self.c_cap = choice([""] + cand_data.CAP_BAC, r.get("cap_bac_moi") or "")
         self.c_heso = SuggestCombo(cand_data.HE_SO_LUONG_HOP_LE, text=r.get("he_so_luong_moi") or "")
+        self.e_lydo = QLineEdit(r.get("ly_do_ngoai_le") or "")
+        self.e_lydo.setPlaceholderText("Bắt buộc khi hình thức Khác hoặc hệ số khác bảng theo cấp bậc")
+        self.lbl_lydo = label("", "Note", wrap=True)
+        for w in (self.c_loai, self.c_cap):
+            w.currentTextChanged.connect(self._check_rule)
+        self.c_heso.currentTextChanged.connect(self._check_rule)
         self.c_cap.currentTextChanged.connect(self._on_rank)
         self.t_nd = text_edit(r.get("noi_dung"), 70)
         self.e_note = QLineEdit(r.get("ghi_chu") or "")
@@ -158,12 +168,21 @@ class EntryDialog(FormDialog):
             f.addRow(text, w)
         f.addRow("", label("Nhập cấp bậc mới, hệ số lương mới hoặc cả hai (hệ số tự điền theo cấp bậc, "
                            "sửa lại được).", "Muted", wrap=True))
+        f.addRow("Lý do (ngoài quy định)", self.e_lydo)
+        f.addRow("", self.lbl_lydo)
         f.addRow("Nội dung", self.t_nd)
         f.addRow("Ghi chú", self.e_note)
         f.addRow("File đính kèm", self.file)
         f.addRow("", self.sync)
         self.body.addStretch(1)
+        self._check_rule()
         self.add_buttons("💾  Lưu thay đổi" if row else "➕  Thêm", self.save)
+
+    def _check_rule(self, *_):
+        why = ngoai_quy_dinh(self.c_loai.currentText(), self.c_cap.currentText(),
+                             self.c_heso.text().replace(",", "."))
+        self.lbl_lydo.setText(f"⚠ Ngoài quy định: {why} - vui lòng ghi lý do." if why else "")
+        self.lbl_lydo.setVisible(bool(why))
 
     def _on_rank(self, text):
         coef = cand_data.HE_SO_LUONG_THEO_CAP_BAC.get(text)
@@ -189,7 +208,13 @@ class EntryDialog(FormDialog):
         if ngay and not valid_date(ngay):
             warn(self, "Ngày quyết định phải theo dạng dd/mm/yyyy.", "Sai định dạng")
             return
+        why = ngoai_quy_dinh(self.c_loai.currentText(), cap, heso)
+        lydo = self.e_lydo.text().strip()
+        if why and not lydo:
+            warn(self, f"Quyết định này ngoài quy định ({why}).\nVui lòng ghi rõ lý do.", "Cần ghi lý do")
+            return
         data = dict(can_bo_id=emp_id, loai=self.c_loai.currentText(), ngay_quyet_dinh=ngay,
+                    ly_do_ngoai_le=lydo or None,
                     so_quyet_dinh=self.e_so.text().strip(), nguoi_ky=self.e_ky.text().strip(),
                     cap_bac_moi=cap or None, he_so_luong_moi=heso or None,
                     noi_dung=self.t_nd.toPlainText().strip(), ghi_chu=self.e_note.text().strip())

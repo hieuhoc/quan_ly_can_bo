@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-PHẦN MỀM QUẢN LÝ CÁN BỘ - Phiên bản 4.0 (giao diện PySide6 / Qt)
+PHẦN MỀM QUẢN LÝ CÁN BỘ - Phiên bản 4.1 (giao diện PySide6 / Qt)
 ------------------------------------------------------------------
 Bản đóng gói:   QuanLyCanBo.exe                (không cần cài Python)
-Chạy mã nguồn:  python quan_ly_can_bo.py       (cần: pip install PySide6-Essentials)
+Chạy mã nguồn:  python quan_ly_can_bo.py       (cần: pip install -r requirements.txt)
 Đặt lại mật khẩu admin (khi quên):  QuanLyCanBo.exe --reset-admin
 Xem mã máy này (để xin cấp phép):   QuanLyCanBo.exe --ma-may
 Tự kiểm tra sau khi đóng gói:       QuanLyCanBo.exe --kiem-tra   (không mở cửa sổ, ghi kết quả ra file)

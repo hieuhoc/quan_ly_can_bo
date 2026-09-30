@@ -1,12 +1,12 @@
 # -*- coding: utf-8 -*-
 """Module: Phân loại, đánh giá, chấm điểm cán bộ theo tháng / quý / năm."""
-import csv
 import datetime
 
 from PySide6.QtWidgets import QHBoxLayout, QLineEdit, QStackedWidget, QVBoxLayout, QWidget
 
+import ui.widgets as W
 from ui.widgets import (DataTable, EmployeePicker, FormDialog, ListPage, SearchDialog, SuggestCombo, TabBar, ask,
-                        button, card, choice, info, label, rule, save_file_dialog, warn)
+                        button, card, choice, label, rule, warn)
 
 MODULE_ID = "classification"
 TABLE = "phan_loai_can_bo"
@@ -90,7 +90,11 @@ class ListTab(ListPage):
                          subtitle="Kết quả phân loại, chấm điểm cán bộ theo tháng / quý / năm")
         self.add_action("➕  Thêm kết quả", self.open_add, "primary", perm="add")
         self.add_action("🗑  Xóa", self.on_delete, "danger", perm="delete", needs_selection=True)
-        self.add_action("📤  Xuất CSV", self.export_csv, perm="export", right=True)
+        cols = [(k, lbl) for k, lbl, _w in COLS]
+        self.add_action("📊  Xuất Excel", lambda: self.export_excel(
+            "Danh sách phân loại cán bộ", "phan_loai_can_bo", columns=cols), perm="export", right=True)
+        self.add_action("🖨  In PDF", lambda: self.print_pdf(
+            "Danh sách phân loại cán bộ", "phan_loai_can_bo", columns=cols), perm="export", right=True)
         self.table.set_display("diem", lambda v, r: "" if v is None else f"{v:g}")
         self.table.delete_pressed.connect(self.on_delete)
         self.refresh()
@@ -147,23 +151,6 @@ class ListTab(ListPage):
         self.app.set_status("Đã xóa bản ghi.")
         self.refresh()
 
-    def export_csv(self):
-        if self.deny("export"):
-            return
-        path = save_file_dialog(self, datetime.datetime.now().strftime("phan_loai_can_bo_%Y%m%d.csv"))
-        if not path:
-            return
-        rows = self.table.rows()
-        with open(path, "w", newline="", encoding="utf-8-sig") as f:
-            w = csv.writer(f)
-            w.writerow(["Mã cán bộ", "Họ và tên", "Loại kỳ", "Năm", "Kỳ đánh giá", "Xếp loại", "Điểm", "Ghi chú"])
-            for r in rows:
-                w.writerow([r["ma_cb"], r["ho_ten"], r["loai"], r["nam"] or "", r["ky"], r["xep_loai"],
-                            "" if r["diem"] is None else r["diem"], r["ghi_chu"] or ""])
-        self.db.log(self.app.user["username"], "Xuất CSV", f"{len(rows)} bản ghi (phân loại)")
-        info(self, f"Đã xuất file:\n{path}", "Xuất CSV")
-
-
 class GridTab(QWidget):
     """Bảng tổng hợp: mỗi cán bộ một dòng, mỗi tháng/quý một cột, cột cuối là
     điểm trung bình trong khoảng kỳ chọn."""
@@ -195,8 +182,10 @@ class GridTab(QWidget):
         bar.addWidget(self.c_to)
         bar.addWidget(button("↻  Xem", self.refresh, "primary"))
         bar.addStretch(1)
-        self.btn_export = button("📤  Xuất CSV", self.export_csv)
+        self.btn_export = button("📊  Xuất Excel", self.export_excel)
+        self.btn_pdf = button("🖨  In PDF", self.print_pdf)
         bar.addWidget(self.btn_export)
+        bar.addWidget(self.btn_pdf)
         lay.addLayout(bar)
         lay.addWidget(label("Xuất sắc / Tốt / HT / Không HT / — (chưa có) — số trong ngoặc là điểm đã chấm", "Muted"))
         self.table_holder = QVBoxLayout()
@@ -254,20 +243,22 @@ class GridTab(QWidget):
             rows.append(row)
         self.table.set_rows(rows)
         self.btn_export.setEnabled(self.app.can(MODULE_ID, "export"))
+        self.btn_pdf.setEnabled(self.app.can(MODULE_ID, "export"))
 
-    def export_csv(self):
-        path = save_file_dialog(self, f"bang_tong_hop_phan_loai_{self.c_loai.currentText().lower()}_"
-                                      f"{self.c_nam.text()}.csv")
-        if not path:
-            return
-        cols = self.table.columns
-        with open(path, "w", newline="", encoding="utf-8-sig") as f:
-            w = csv.writer(f)
-            w.writerow([c[1] for c in cols])
-            for r in self.table.rows():
-                w.writerow([r[c[0]] for c in cols])
-        self.db.log(self.app.user["username"], "Xuất CSV", "Bảng tổng hợp phân loại")
-        info(self, f"Đã xuất file:\n{path}", "Xuất CSV")
+    def _title(self):
+        return f"Bảng tổng hợp xếp loại cán bộ theo {self.c_loai.currentText().lower()} năm {self.c_nam.text()}"
+
+    def _meta(self):
+        return ["Xuất sắc / Tốt / HT / Không HT / — (chưa có); số trong ngoặc là điểm đã chấm"]
+
+    def _name(self):
+        return f"tong_hop_phan_loai_{self.c_loai.currentText().lower()}_{self.c_nam.text()}"
+
+    def export_excel(self):
+        W.export_excel(self, self.app, self.table, self._title(), self._name(), meta_lines=self._meta())
+
+    def print_pdf(self):
+        W.print_pdf(self, self.app, self.table, self._title(), self._name(), meta_lines=self._meta())
 
 
 class EntryDialog(FormDialog):

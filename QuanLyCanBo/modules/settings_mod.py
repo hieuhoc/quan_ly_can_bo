@@ -7,9 +7,10 @@
   tỉnh dùng để chọn đơn vị công tác của cán bộ.
 - Xem mã máy / trạng thái khóa theo máy.
 """
-from PySide6.QtWidgets import QCheckBox, QGridLayout, QHBoxLayout, QPlainTextEdit, QScrollArea, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (QCheckBox, QFormLayout, QGridLayout, QHBoxLayout, QLineEdit, QPlainTextEdit,
+                               QScrollArea, QVBoxLayout, QWidget)
 
-from core import co_cau, registry
+from core import co_cau, registry, report
 from ui.widgets import SuggestCombo, ask, button, card, info, label, rule, warn
 
 MODULE_ID = "settings_mod"
@@ -74,6 +75,26 @@ class Panel(QScrollArea):
         lay.addLayout(r2)
         v.addWidget(f)
 
+        # ---- thể thức in / xuất file
+        f, lay = card(18)
+        lay.addWidget(label("Thể thức in ấn / xuất file", "CardTitle"))
+        lay.addWidget(label("Dùng cho phần đầu (tên cơ quan) và phần chữ ký của các bản in PDF, file Excel.",
+                            "Muted", wrap=True))
+        lay.addWidget(rule())
+        form = QFormLayout()
+        cur = report.settings(self.db)
+        self.print_edits = {}
+        for key, text in report.KEYS.items():
+            e = QLineEdit(cur[key])
+            form.addRow(text, e)
+            self.print_edits[key] = e
+        lay.addLayout(form)
+        r3 = QHBoxLayout()
+        r3.addWidget(button("💾  Lưu thể thức in", self.save_print, "primary"))
+        r3.addStretch(1)
+        lay.addLayout(r3)
+        v.addWidget(f)
+
         # ---- khóa máy
         from core.machine_lock import check as check_machine
         _ok, code, reason = check_machine(self.app.app_dir)
@@ -106,6 +127,12 @@ class Panel(QScrollArea):
         self.db.log(self.app.user["username"], "Cấu hình cơ cấu tổ chức",
                     f"{self.c_tinh.text()}; {len(lines)} phòng")
         info(self, "Đã lưu cơ cấu tổ chức.", "Đã lưu")
+
+    def save_print(self):
+        for key, e in self.print_edits.items():
+            self.db.set_setting(key, e.text().strip())
+        self.db.log(self.app.user["username"], "Cấu hình thể thức in", self.print_edits["in_don_vi"].text())
+        info(self, "Đã lưu thể thức in.", "Đã lưu")
 
     def reset_org(self):
         if ask(self, "Khôi phục danh mục phòng mặc định (danh mục tham khảo)?"):

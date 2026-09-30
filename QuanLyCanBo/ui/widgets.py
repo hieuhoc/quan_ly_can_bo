@@ -269,6 +269,10 @@ class DataTable(QTableView):
         return [self.model_.rows[self.proxy.mapToSource(self.proxy.index(i, 0)).row()]
                 for i in range(self.proxy.rowCount())]
 
+    def display_rows(self):
+        """Các dòng theo thứ tự đang hiển thị, giá trị là CHỮ đang hiện trên bảng."""
+        return [{k: self.model_._text(r, k) for k, _l, _w in self.columns} for r in self.rows()]
+
     def row_count(self):
         return self.proxy.rowCount()
 
@@ -794,6 +798,57 @@ class ListPage(QWidget):
 
     def refresh(self):
         raise NotImplementedError
+
+    # ---- xuất Excel / in PDF theo thể thức
+    def export_excel(self, title, name, columns=None, rows=None, meta_lines=None):
+        if not self.deny("export"):
+            export_excel(self, self.app, self.table, title, name, columns, rows, meta_lines)
+
+    def print_pdf(self, title, name, columns=None, rows=None, meta_lines=(), landscape=True):
+        if not self.deny("export"):
+            print_pdf(self, self.app, self.table, title, name, columns, rows, meta_lines, landscape)
+
+
+def _export_target(parent, name, ext, filter_):
+    from core import report
+    stamp = datetime.datetime.now().strftime("%Y%m%d")
+    return save_file_dialog(parent, report.export_path(f"{name}_{stamp}.{ext}"), filter_)
+
+
+def _export_done(parent, app, path, what):
+    app.db.log(app.user["username"], what, os.path.basename(path))
+    if ask(parent, f"Đã lưu file:\n{path}\n\nMở file ngay?", "Đã xuất", yes="Mở file"):
+        from PySide6.QtCore import QUrl
+        from PySide6.QtGui import QDesktopServices
+        QDesktopServices.openUrl(QUrl.fromLocalFile(path))
+
+
+def export_excel(parent, app, table, title, name, columns=None, rows=None, meta_lines=None):
+    """Xuất Excel các dòng đang hiển thị trên bảng (đã lọc, đúng thứ tự sắp xếp)."""
+    path = _export_target(parent, name, "xlsx", "Excel (*.xlsx)")
+    if not path:
+        return None
+    from core import report, xlsx
+    columns = columns or [(k, lbl) for k, lbl, _w in table.columns]
+    rows = table.display_rows() if rows is None else rows
+    meta = list(meta_lines or []) + [f"Tổng số: {len(rows)}"]
+    xlsx.export_table(path, title, [lbl for _k, lbl in columns], [[r.get(k) for k, _l in columns] for r in rows],
+                      org_lines=report.org_lines(app.db), meta_lines=meta)
+    _export_done(parent, app, path, "Xuất Excel")
+    return path
+
+
+def print_pdf(parent, app, table, title, name, columns=None, rows=None, meta_lines=(), landscape=True):
+    """In PDF (thể thức hành chính) các dòng đang hiển thị trên bảng."""
+    path = _export_target(parent, name, "pdf", "PDF (*.pdf)")
+    if not path:
+        return None
+    from ui import printing
+    columns = columns or [(k, lbl) for k, lbl, _w in table.columns]
+    rows = table.display_rows() if rows is None else rows
+    printing.list_pdf(path, app.db, title, columns, rows, meta_lines, landscape)
+    _export_done(parent, app, path, "In PDF")
+    return path
 
 
 class SearchDialog(FormDialog):

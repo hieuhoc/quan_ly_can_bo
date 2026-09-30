@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (QButtonGroup, QGridLayout, QHBoxLayout, QLineEdit
 
 from core import attachments, cand_data, co_cau
 from ui.widgets import (DataTable, DateField, FilePicker, FormDialog, ListPage, ProvinceWardPicker, SearchDialog,
-                        SuggestCombo, ask, button, choice, info, label, open_file_dialog, save_file_dialog, section,
+                        SuggestCombo, ask, button, choice, info, label, open_file_dialog, section,
                         text_edit, valid_date, warn)
 
 MODULE_ID = "employees"
@@ -47,6 +47,8 @@ SECTIONS = [
         ("don_vi", "Phòng / Công an xã, phường", "ca_donvi"),
         ("doi_to", "Đội / Tổ", "text"),
         ("he_so_luong", "Hệ số lương", "salary"),
+        # Ngoại lệ: hệ số khác bảng hệ số theo cấp bậc thì BẮT BUỘC ghi lý do.
+        ("ly_do_he_so", "Lý do (hệ số khác quy định)", "text"),
     ]),
     (SEC_CONG_TAC, [
         ("ngay_vao_nganh", "Ngày vào ngành", "date"),
@@ -109,7 +111,47 @@ def validate(data):
         return "Số điện thoại không hợp lệ."
     if data.get("so_cccd") and not re.fullmatch(r"\d{12}", data["so_cccd"]):
         return "Số CCCD phải gồm đúng 12 chữ số."
+    why = he_so_ngoai_quy_dinh(data.get("cap_bac"), data.get("he_so_luong"))
+    if why and not (data.get("ly_do_he_so") or "").strip():
+        return f"{why}.\nVui lòng ghi rõ Lý do (hệ số khác quy định)."
     return None
+
+
+def he_so_ngoai_quy_dinh(cap_bac, he_so):
+    """Mô tả điểm khác bảng hệ số lương theo cấp bậc, hoặc None nếu khớp / không áp dụng."""
+    chuan = cand_data.HE_SO_LUONG_THEO_CAP_BAC.get(cap_bac or "")
+    if not chuan or not he_so:
+        return None
+    try:
+        if abs(float(str(he_so).replace(",", ".")) - float(chuan)) < 1e-9:
+            return None
+    except ValueError:
+        return None
+    return f"Hệ số lương {he_so} khác hệ số theo cấp bậc {cap_bac} ({chuan})"
+
+
+PHOTO_DIR = "anh_the"
+
+
+def photo_path(app_dir, rel):
+    return attachments.full_path(app_dir, rel) if rel else None
+
+
+def save_photo(app_dir, src):
+    """Thu nhỏ ảnh (tối đa 450x600, giữ tỉ lệ), lưu JPG vào attachments/anh_the/."""
+    import os
+    import uuid
+    from PySide6.QtCore import Qt as _Qt
+    from PySide6.QtGui import QImage
+    img = QImage(src)
+    if img.isNull():
+        return None
+    img = img.scaled(450, 600, _Qt.KeepAspectRatio, _Qt.SmoothTransformation)
+    folder = os.path.join(app_dir, attachments.ATTACH_DIR, PHOTO_DIR)
+    os.makedirs(folder, exist_ok=True)
+    rel = f"{attachments.ATTACH_DIR}/{PHOTO_DIR}/{uuid.uuid4().hex[:12]}.jpg"
+    img.save(attachments.full_path(app_dir, rel), "JPG", 90)
+    return rel
 
 
 # ------------------------------------------------------------------ quá trình công tác / học tập
@@ -293,9 +335,9 @@ class Panel(ListPage):
         self.add_action("✏  Sửa", self.open_edit, perm="edit", needs_selection=True)
         self.add_action("🗑  Xóa", self.on_delete, "danger", perm="delete", needs_selection=True)
         self.add_action("📄  Hồ sơ chi tiết", self.show_profile, needs_selection=True)
-        self.add_action("📥  Nhập CSV", self.import_csv, perm="add", right=True)
-        self.add_action("📤  Xuất CSV", self.export_csv, perm="export", right=True)
-        self.add_action("🖨  In danh sách", self.print_list, perm="export", right=True)
+        self.add_action("📥  Nhập Excel / CSV", self.import_file, perm="add", right=True)
+        self.add_action("📊  Xuất Excel", self.export_xlsx, perm="export", right=True)
+        self.add_action("🖨  In danh sách (PDF)", self.print_list, perm="export", right=True)
         self.add_action("🗂  Đã xóa / điều chuyển", self.show_deleted, right=True)
         self.table.activated_row.connect(self.show_profile)
         self.table.delete_pressed.connect(self.on_delete)
@@ -361,30 +403,40 @@ class Panel(ListPage):
     def show_deleted(self):
         DeletedHistoryDialog(self).exec()
 
-    # ---- CSV
-    def export_csv(self):
-        if self.deny("export"):
-            return
-        path = save_file_dialog(self, datetime.datetime.now().strftime("danh_sach_can_bo_%Y%m%d.csv"))
-        if not path:
-            return
-        keys = [k for k, _l, _t in ALL_FIELDS]
-        rows = self.table.rows()
-        with open(path, "w", newline="", encoding="utf-8-sig") as f:
-            w = csv.writer(f)
-            w.writerow([LABELS[k].replace(" *", "") for k in keys])
-            for r in rows:
-                w.writerow([r.get(k) or "" for k in keys])
-        self.db.log(self.app.user["username"], "Xuất CSV", f"{len(rows)} bản ghi (cán bộ)")
-        info(self, f"Đã xuất file:\n{path}", "Xuất CSV")
+    # ---- Excel / CSV / PDF
+    def export_xlsx(self):
+        """Xuất Excel ĐẦY ĐỦ các trường - dùng được để sửa rồi nhập lại."""
+        cols = [(k, LABELS[k].replace(" *", "")) for k, _l, _t in ALL_FIELDS]
+        self.export_excel("Danh sách cán bộ", "danh_sach_can_bo", columns=cols, rows=self.table.rows())
 
-    def import_csv(self):
-        """Nhập từ CSV: chỉ ghi những cột CÓ trong file (không xóa trắng các
-        trường khác của cán bộ đã có); cập nhật cán bộ đã có cần quyền Sửa;
-        dòng sai định dạng bị bỏ qua và liệt kê lại."""
+    def print_list(self):
+        """In danh sách trích ngang (PDF, khổ A4 ngang)."""
+        cols = [("ho_ten", "Họ và tên"), ("ngay_sinh", "Ngày sinh"), ("cap_bac", "Cấp bậc"), ("chuc_vu", "Chức vụ"),
+                ("don_vi_day_du", "Đơn vị"), ("he_so_luong", "Hệ số lương"), ("ngay_vao_nganh", "Vào ngành"),
+                ("ngay_vao_dang", "Vào Đảng"), ("trinh_do_nghiep_vu", "Trình độ nghiệp vụ"),
+                ("trinh_do_chinh_tri", "Lý luận chính trị")]
+        rows = []
+        for r in self.table.rows():
+            d = dict(r)
+            d["don_vi_day_du"] = ", ".join(x for x in (r.get("doi_to"), r.get("don_vi")) if x)
+            rows.append(d)
+        self.print_pdf("Danh sách trích ngang cán bộ", "danh_sach_trich_ngang", columns=cols, rows=rows)
+
+    def _read_rows(self, path):
+        if path.lower().endswith((".xlsx", ".xlsm")):
+            from core import xlsx
+            return xlsx.read_table(path)
+        with open(path, "r", encoding="utf-8-sig", newline="") as f:
+            return [(n, row) for n, row in enumerate(csv.DictReader(f), start=2)]
+
+    def import_file(self):
+        """Nhập từ Excel hoặc CSV (tiêu đề cột như file xuất ra): chỉ ghi những
+        cột CÓ trong file (không xóa trắng các trường khác của cán bộ đã có);
+        cập nhật cán bộ đã có cần quyền Sửa; dòng sai bị bỏ qua và liệt kê lại."""
         if self.deny("add"):
             return
-        path = open_file_dialog(self, "Chọn file CSV", "CSV (*.csv);;Tất cả file (*.*)")
+        path = open_file_dialog(self, "Chọn file Excel hoặc CSV",
+                                "Excel / CSV (*.xlsx *.csv);;Tất cả file (*.*)")
         if not path:
             return
         keys = [k for k, _l, _t in ALL_FIELDS]
@@ -394,36 +446,37 @@ class Panel(ListPage):
         added = updated = skipped = 0
         errors = []
         try:
-            with open(path, "r", encoding="utf-8-sig", newline="") as f:
-                for line_no, row in enumerate(csv.DictReader(f), start=2):
-                    data = {}
-                    for col, val in row.items():
-                        key = label_to_key.get((col or "").strip().rstrip("*").strip())
-                        if key:
-                            data[key] = (val or "").strip()
-                    existing = self.db.conn.execute("SELECT * FROM can_bo WHERE ma_cb=?",
-                                                    (data.get("ma_cb", ""),)).fetchone()
-                    merged = dict(existing) if existing else {}
-                    merged.update(data)
-                    problem = validate(merged)
-                    if problem:
+            for line_no, row in self._read_rows(path):
+                data = {}
+                for col, val in row.items():
+                    key = label_to_key.get((col or "").strip().rstrip("*").strip())
+                    if key:
+                        data[key] = (val or "").strip()
+                if not data:
+                    continue
+                existing = self.db.conn.execute("SELECT * FROM can_bo WHERE ma_cb=?",
+                                                (data.get("ma_cb", ""),)).fetchone()
+                merged = dict(existing) if existing else {}
+                merged.update(data)
+                problem = validate(merged)
+                if problem:
+                    skipped += 1
+                    errors.append(f"Dòng {line_no}: {problem.splitlines()[0]}")
+                    continue
+                if existing:
+                    if not can_edit:
                         skipped += 1
-                        errors.append(f"Dòng {line_no}: {problem}")
+                        errors.append(f"Dòng {line_no}: mã {data['ma_cb']} đã có - cần quyền Sửa để cập nhật.")
                         continue
-                    if existing:
-                        if not can_edit:
-                            skipped += 1
-                            errors.append(f"Dòng {line_no}: mã {data['ma_cb']} đã có - cần quyền Sửa để cập nhật.")
-                            continue
-                        self.db.update(TABLE, existing["id"], data)
-                        updated += 1
-                    else:
-                        self.db.insert(TABLE, data)
-                        added += 1
+                    self.db.update(TABLE, existing["id"], data)
+                    updated += 1
+                else:
+                    self.db.insert(TABLE, data)
+                    added += 1
         except Exception as e:  # noqa
-            warn(self, f"Không thể đọc file CSV:\n{e}", "Lỗi đọc file")
+            warn(self, f"Không thể đọc file:\n{e}", "Lỗi đọc file")
             return
-        self.db.log(self.app.user["username"], "Nhập CSV", f"Thêm mới {added}, cập nhật {updated}, bỏ qua {skipped}")
+        self.db.log(self.app.user["username"], "Nhập file", f"Thêm mới {added}, cập nhật {updated}, bỏ qua {skipped}")
         self.refresh()
         msg = f"Đã thêm mới: {added}\nĐã cập nhật: {updated}\nBỏ qua: {skipped}"
         if errors:
@@ -432,15 +485,64 @@ class Panel(ListPage):
                 msg += f"\n... và {len(errors) - 10} dòng khác."
         info(self, msg, "Kết quả nhập file")
 
-    def print_list(self):
-        if self.deny("export"):
-            return
-        import core.report as report
-        rows = self.table.rows()
-        meta = [f"Người xuất: {self.app.user['ho_ten'] or self.app.user['username']}", f"Số lượng: {len(rows)} cán bộ"]
-        html_str = report.build_list_html("Danh sách cán bộ", meta, [(k, col_label(k)) for k in COLUMNS_SHOW], rows)
-        report.open_html(html_str, "danh_sach_can_bo.html")
-        self.db.log(self.app.user["username"], "In danh sách", f"{len(rows)} cán bộ")
+
+# ------------------------------------------------------------------ ảnh thẻ
+class PhotoBox(QWidget):
+    """Khung ảnh thẻ 3x4 + nút Chọn ảnh / Xóa ảnh (readonly: chỉ hiển thị)."""
+    W, H = 113, 151
+
+    def __init__(self, app_dir, rel=None, readonly=False):
+        super().__init__()
+        self.app_dir, self.rel = app_dir, rel
+        self.pending = None      # đường dẫn ảnh mới chọn (chưa lưu)
+        self.removed = False
+        v = QVBoxLayout(self)
+        v.setContentsMargins(0, 0, 0, 0)
+        v.setSpacing(6)
+        self.img = label()
+        self.img.setFixedSize(self.W, self.H)
+        self.img.setAlignment(Qt.AlignCenter)
+        self.img.setStyleSheet("border: 1px dashed #C9CED6; border-radius: 6px; background: #F9FAFB; color: #9CA3AF;")
+        v.addWidget(self.img, 0, Qt.AlignHCenter)
+        if not readonly:
+            h = QHBoxLayout()
+            h.setSpacing(4)
+            h.addWidget(button("Chọn ảnh", self._pick))
+            h.addWidget(button("Xóa", self._remove))
+            v.addLayout(h)
+        self._show(photo_path(app_dir, rel))
+
+    def _show(self, path):
+        from PySide6.QtGui import QPixmap
+        pm = QPixmap(path) if path else QPixmap()
+        if pm.isNull():
+            self.img.setPixmap(QPixmap())
+            self.img.setText("Ảnh thẻ\n3 x 4")
+        else:
+            self.img.setPixmap(pm.scaled(self.W, self.H, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+
+    def _pick(self):
+        path = open_file_dialog(self, "Chọn ảnh thẻ", "Ảnh (*.jpg *.jpeg *.png *.bmp)")
+        if path:
+            self.pending, self.removed = path, False
+            self._show(path)
+
+    def _remove(self):
+        self.pending, self.removed = None, True
+        self._show(None)
+
+    def commit(self):
+        """Lưu ảnh mới (nếu có) và trả về đường dẫn tương đối cần ghi vào CSDL."""
+        if self.pending:
+            new_rel = save_photo(self.app_dir, self.pending)
+            if new_rel:
+                if self.rel:
+                    attachments.delete_attachment(self.app_dir, self.rel)
+                self.rel, self.pending = new_rel, None
+        elif self.removed and self.rel:
+            attachments.delete_attachment(self.app_dir, self.rel)
+            self.rel = None
+        return self.rel
 
 
 # ------------------------------------------------------------------ thêm / sửa cán bộ
@@ -453,6 +555,13 @@ class EmployeeDialog(FormDialog):
         self.pickers = {}     # (cột tỉnh, cột xã) -> ProvinceWardPicker
         self.timelines = {}
         self.unit = UnitFields(self.db)
+        self.photo = PhotoBox(panel.app.app_dir, r.get("anh_the"))
+        top = QHBoxLayout()
+        top.addWidget(self.photo, 0, Qt.AlignTop)
+        top.addSpacing(12)
+        top.addWidget(label("Ảnh thẻ (không bắt buộc): chọn file ảnh chân dung, phần mềm tự thu nhỏ và lưu kèm "
+                            "hồ sơ. Ảnh được in trên hồ sơ cán bộ.", "Muted", wrap=True), 1, Qt.AlignVCenter)
+        self.body.addLayout(top)
         for title, fields in SECTIONS:
             f = self.add_section(title)
             for key, text, kind in fields:
@@ -472,6 +581,12 @@ class EmployeeDialog(FormDialog):
                 self.body.addWidget(tl)
         if not r:
             self.unit.tinh.setText(co_cau.tinh_mac_dinh(self.db))
+        self.note_he_so = label("", "Note", wrap=True)
+        self.body.insertWidget(self.body.indexOf(self.fields["ly_do_he_so"][0].parentWidget()) + 1, self.note_he_so)
+        self.fields["ly_do_he_so"][0].setPlaceholderText("Bắt buộc khi hệ số lương khác bảng hệ số theo cấp bậc")
+        self.fields["he_so_luong"][0].currentTextChanged.connect(self._check_he_so)
+        self.fields["cap_bac"][0].currentTextChanged.connect(self._check_he_so)
+        self._check_he_so()
         self.body.addStretch(1)
         self.add_buttons("💾  Lưu thay đổi" if row else "➕  Thêm mới", self.save)
 
@@ -506,8 +621,13 @@ class EmployeeDialog(FormDialog):
 
     def _on_rank(self, text):
         coef = cand_data.HE_SO_LUONG_THEO_CAP_BAC.get(text)
-        if coef:
+        if coef and "he_so_luong" in self.fields:
             self.fields["he_so_luong"][0].setText(coef)
+
+    def _check_he_so(self, *_):
+        why = he_so_ngoai_quy_dinh(self.fields["cap_bac"][0].currentText(), self.fields["he_so_luong"][0].text())
+        self.note_he_so.setText(f"⚠ {why} - vui lòng ghi lý do." if why else "")
+        self.note_he_so.setVisible(bool(why))
 
     def values(self):
         data = {}
@@ -524,6 +644,7 @@ class EmployeeDialog(FormDialog):
             warn(self, problem, "Kiểm tra lại thông tin")
             return
         user = self.panel.app.user["username"]
+        data["anh_the"] = self.photo.commit()
         try:
             if self.row is None:
                 new_id = self.db.insert(TABLE, data)
@@ -548,10 +669,15 @@ class ProfileDialog(FormDialog):
         self.panel, self.app, self.row = panel, panel.app, row
         readonly = not self.app.can(MODULE_ID, "edit")
         head = QHBoxLayout()
-        head.addWidget(label(f"Mã cán bộ: {row['ma_cb']}", "Muted"))
-        head.addStretch(1)
+        head.addWidget(PhotoBox(self.app.app_dir, row["anh_the"], readonly=True))
+        head.addSpacing(14)
+        who = QVBoxLayout()
+        who.addWidget(label(row["ho_ten"], "PageTitle"))
+        who.addWidget(label(f"Mã cán bộ: {row['ma_cb']}   •   {row['cap_bac'] or ''}   {row['chuc_vu'] or ''}", "Muted"))
         unit = ", ".join(x for x in (row["doi_to"], row["don_vi"], row["cong_an_tinh"]) if x)
-        head.addWidget(label(unit or "(chưa có đơn vị)", "Muted"))
+        who.addWidget(label(unit or "(chưa có đơn vị)", "Muted", wrap=True))
+        who.addStretch(1)
+        head.addLayout(who, 1)
         self.body.addLayout(head)
         for title, fields in SECTIONS_FLAT:
             self.body.addWidget(section(title))
@@ -574,16 +700,19 @@ class ProfileDialog(FormDialog):
                 self.body.addWidget(TimelineWidget(self.app.db, SECTION_TIMELINE[title], can_bo_id=row["id"],
                                                    readonly=readonly, rows_visible=3))
         self.body.addStretch(1)
-        b = button("🖨  Xuất hồ sơ để in (HTML)", self.export_html, "primary")
+        b = button("🖨  In hồ sơ (PDF)", self.export_pdf, "primary")
         b.setEnabled(self.app.can(MODULE_ID, "export"))
         self.footer.addWidget(b, 1)
         self.footer.addWidget(button("Đóng", self.accept), 1)
 
-    def export_html(self):
-        import core.report as report
+    def export_pdf(self):
+        from core import report
+        from ui import printing
+        from ui.widgets import save_file_dialog
         sections = []
         for title, fields in SECTIONS_FLAT:
-            item = [title, [(t.replace(" *", ""), self.row[k] or "") for k, t, _x in fields]]
+            item = [title, [(t.replace(" *", ""), self.row[k] or "") for k, t, _x in fields
+                            if not (k == "ly_do_he_so" and not self.row[k])]]
             if title in SECTION_TIMELINE:
                 kind = SECTION_TIMELINE[title]
                 cfg = TIMELINES[kind]
@@ -591,12 +720,15 @@ class ProfileDialog(FormDialog):
                         for r in timeline_rows(self.app.db, kind, self.row["id"])]
                 item.append(([(k, lbl) for k, lbl, _w in cfg["cols"]], rows))
             sections.append(tuple(item))
-        unit = ", ".join(x for x in (self.row["doi_to"], self.row["don_vi"], self.row["cong_an_tinh"]) if x) or "—"
-        meta = [f"Đơn vị: {unit}", f"Người xuất: {self.app.user['ho_ten'] or self.app.user['username']}"]
-        html_str = report.build_profile_html(f"Hồ sơ cán bộ: {self.row['ho_ten']}", sections, meta)
-        path = report.open_html(html_str, f"ho_so_{self.row['ma_cb']}.html")
+        path = save_file_dialog(self, report.export_path(f"ho_so_{self.row['ma_cb']}.pdf"), "PDF (*.pdf)")
+        if not path:
+            return
+        printing.profile_pdf(path, self.app.db, "Hồ sơ cán bộ", sections,
+                             photo_path(self.app.app_dir, self.row["anh_the"]),
+                             meta_lines=[f"{self.row['ho_ten']} - Mã cán bộ: {self.row['ma_cb']}"])
         self.app.db.log(self.app.user["username"], "In hồ sơ cán bộ", f"{self.row['ma_cb']} - {self.row['ho_ten']}")
-        info(self, f"Đã mở hồ sơ trong trình duyệt.\nFile: {path}", "Đã xuất")
+        if ask(self, f"Đã lưu file:\n{path}\n\nMở file ngay?", "Đã xuất", yes="Mở file"):
+            printing.open_pdf(path)
 
 
 # ------------------------------------------------------------------ xóa kèm lý do
