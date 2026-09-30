@@ -198,6 +198,9 @@ class Database:
         # phường (cột don_vi sẵn có). Cột cap_don_vi cũ giữ lại, không dùng nữa.
         if "doi_to" not in self._cols("can_bo"):
             self.conn.execute("ALTER TABLE can_bo ADD COLUMN doi_to TEXT")
+        # v4.0: đơn vị chọn theo cơ cấu Công an tỉnh -> Phòng / CA xã, phường -> Đội / Tổ
+        if "cong_an_tinh" not in self._cols("can_bo"):
+            self.conn.execute("ALTER TABLE can_bo ADD COLUMN cong_an_tinh TEXT")
         # v3.9: nâng lương và thăng cấp là MỘT quyết định - thêm hệ số lương
         # mới và người ký bên cạnh cấp bậc mới.
         have_ql = self._cols("qua_trinh_luong")

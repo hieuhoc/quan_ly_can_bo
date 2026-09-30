@@ -6,24 +6,24 @@ title Cai dat phan mem Quan Ly Can Bo
 rem ================= CAU HINH (co the sua) =================
 set "HERE=%~dp0"
 set "SRC=%HERE%QuanLyCanBo"
-set "APP_FILE=quan_ly_can_bo.py"
+set "EXE_NAME=QuanLyCanBo.exe"
 set "DEST=%LOCALAPPDATA%\QuanLyCanBo"
-set "PY_VER=3.12.8"
 set "ALLOWLIST=%HERE%allowed_machines.txt"
 rem =========================================================
 
 echo ============================================================
-echo    CAI DAT PHAN MEM QUAN LY CAN BO  (ban module)
+echo    CAI DAT PHAN MEM QUAN LY CAN BO  (ban 4.0 - file .exe)
 echo ============================================================
 echo.
 
-if exist "%SRC%\%APP_FILE%" goto :src_ok
-echo [LOI] Khong tim thay thu muc "QuanLyCanBo" (chua chuong trinh) canh file cai dat nay.
-echo       Cau truc dung phai la:
+if exist "%SRC%\%EXE_NAME%" goto :src_ok
+echo [LOI] Khong tim thay "QuanLyCanBo\%EXE_NAME%" canh file cai dat nay.
+echo       Cau truc dung cua bo cai phai la:
 echo         CAI_DAT.bat
-echo         QuanLyCanBo\quan_ly_can_bo.py
-echo         QuanLyCanBo\core\...
-echo         QuanLyCanBo\modules\...
+echo         QuanLyCanBo\QuanLyCanBo.exe
+echo         QuanLyCanBo\_internal\...
+echo       Neu ban dang mo ma nguon (co file quan_ly_can_bo.py), hay tai bo cai
+echo       dat da dong goi (QuanLyCanBo_v4.x.zip) o muc Releases cua kho ma nguon.
 goto :fail
 :src_ok
 
@@ -58,35 +58,33 @@ goto :fail
 
 :machine_ok
 
-rem ---------------- Buoc 1: Python ----------------
-echo [1/3] Kiem tra Python ...
-set "PYEXE="
-call :find_python
-if defined PYEXE goto :python_ready
-
-echo       Chua co Python (hoac thieu Tkinter). Dang cai dat Python %PY_VER% ...
-call :install_python
-call :find_python
-if defined PYEXE goto :python_ready
-goto :no_python
-
-:python_ready
-echo       Da co Python: %PYEXE%
+rem ---------------- Buoc 1: dong phan mem neu dang mo ----------------
+echo [1/3] Chuan bi cai dat ...
+tasklist /fi "imagename eq %EXE_NAME%" 2>nul | find /i "%EXE_NAME%" >nul
+if errorlevel 1 goto :not_running
+echo       Phan mem dang mo - se duoc dong lai de cap nhat.
+echo       (Hay luu cong viec dang lam, roi bam phim bat ky de tiep tuc.)
+pause >nul
+taskkill /im "%EXE_NAME%" /f >nul 2>nul
+timeout /t 2 /nobreak >nul
+:not_running
 
 rem ---------------- Buoc 2: chep chuong trinh ----------------
 echo [2/3] Cai dat chuong trinh vao: %DEST%
 if not exist "%DEST%" mkdir "%DEST%"
 if not exist "%DEST%" goto :fail_dest
+rem Chi chep chuong trinh (QuanLyCanBo.exe + _internal). Du lieu dang dung
+rem (canbo.db, backup, attachments, xuat_file) KHONG nam trong bo cai nen giu
+rem nguyen - ke ca du lieu cua ban cu (ban chay bang Python) cung thu muc nay.
+if exist "%DEST%\_internal" rmdir /s /q "%DEST%\_internal"
 xcopy "%SRC%\*" "%DEST%\" /E /I /Y /Q >nul
 if errorlevel 1 goto :fail_dest
-rem Giu nguyen du lieu cu: chi chep canbo.db neu ben dich chua co (nang cap khong mat du lieu)
+rem Chep du lieu cu (canbo.db) dat canh bo cai, neu ben dich chua co
 if not exist "%HERE%canbo.db" goto :db_done
 if exist "%DEST%\canbo.db" goto :db_done
 copy "%HERE%canbo.db" "%DEST%\canbo.db" >nul
-echo       Da chep du lieu cu (canbo.db) sang thu muc moi.
+echo       Da chep du lieu cu (canbo.db) sang thu muc cai dat.
 :db_done
-rem Luon chep/cap nhat danh sach may duoc duyet (neu co) de phan mem tu kiem
-rem tra lai moi lan mo, phong truong hop thu muc cai dat bi chep sang may khac.
 if exist "%ALLOWLIST%" (
   copy /y "%ALLOWLIST%" "%DEST%\allowed_machines.txt" >nul
   echo       Da cap nhat danh sach may duoc duyet trong thu muc cai dat.
@@ -94,23 +92,17 @@ if exist "%ALLOWLIST%" (
 
 rem ---------------- Buoc 3: bieu tuong + khoi dong ----------------
 echo [3/3] Tao bieu tuong tren Desktop, Start Menu va khoi dong phan mem ...
-set "QLCB_PYWFILE=%TEMP%\qlcb_pyw.txt"
 set "QLCB_DEST=%DEST%"
-set "QLCB_APP=%APP_FILE%"
-if exist "%QLCB_PYWFILE%" del "%QLCB_PYWFILE%"
-%PYEXE% -c "import sys,os;open(os.environ['QLCB_PYWFILE'],'w',encoding='utf-8').write(os.path.join(os.path.dirname(sys.executable),'pythonw.exe'))"
-if not exist "%QLCB_PYWFILE%" goto :fail_lnk
-
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; $pyw=(Get-Content -Raw -Encoding UTF8 -LiteralPath $env:QLCB_PYWFILE).Trim(); if(-not (Test-Path -LiteralPath $pyw)){ $pyw=$pyw -replace 'pythonw\.exe$','python.exe' }; $q=[char]34; $script=Join-Path $env:QLCB_DEST $env:QLCB_APP; $w=New-Object -ComObject WScript.Shell; $first=$null; foreach($dir in @([Environment]::GetFolderPath('Desktop'),[Environment]::GetFolderPath('Programs'))){ if(-not $dir){ continue }; $lnk=Join-Path $dir 'Quan Ly Can Bo.lnk'; $s=$w.CreateShortcut($lnk); $s.TargetPath=$pyw; $s.Arguments=$q+$script+$q; $s.WorkingDirectory=$env:QLCB_DEST; $s.IconLocation=($pyw+',0'); $s.Description='Phan mem Quan Ly Can Bo'; $s.Save(); Write-Host ('      Da tao bieu tuong: '+$lnk); if(-not $first){ $first=$lnk } }; if($first){ Start-Process -FilePath $first }"
+set "QLCB_EXE=%EXE_NAME%"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; $exe=Join-Path $env:QLCB_DEST $env:QLCB_EXE; $w=New-Object -ComObject WScript.Shell; $first=$null; foreach($dir in @([Environment]::GetFolderPath('Desktop'),[Environment]::GetFolderPath('Programs'))){ if(-not $dir){ continue }; $lnk=Join-Path $dir 'Quan Ly Can Bo.lnk'; $s=$w.CreateShortcut($lnk); $s.TargetPath=$exe; $s.Arguments=''; $s.WorkingDirectory=$env:QLCB_DEST; $s.IconLocation=($exe+',0'); $s.Description='Phan mem Quan Ly Can Bo'; $s.Save(); Write-Host ('      Da tao bieu tuong: '+$lnk); if(-not $first){ $first=$lnk } }; if($first){ Start-Process -FilePath $first }"
 if errorlevel 1 goto :fail_lnk
-if exist "%QLCB_PYWFILE%" del "%QLCB_PYWFILE%"
 
 echo.
 echo ============================================================
 echo    CAI DAT HOAN TAT!
 echo ============================================================
 echo  - Mo phan mem bang bieu tuong "Quan Ly Can Bo" o Desktop.
-echo  - Tai khoan mac dinh: admin / admin@123
+echo  - Tai khoan mac dinh (lan dau): admin / admin@123
 echo    (phan mem se yeu cau doi mat khau o lan dang nhap dau tien)
 echo  - Du lieu luu tai: %DEST%\canbo.db
 echo  - Thu muc sao luu tu dong: %DEST%\backup
@@ -120,16 +112,6 @@ endlocal
 exit /b 0
 
 rem ================= Cac thong bao loi =================
-:no_python
-echo.
-echo [LOI] Khong cai duoc Python tu dong (co the may khong co Internet).
-echo       Cach cai tren may OFFLINE:
-echo         1. Tren may co mang, tai bo cai Python 3.12 (Windows installer 64-bit) tai
-echo            https://www.python.org/downloads/windows/
-echo         2. Chep file python-3.xx.x-amd64.exe vao CUNG THU MUC voi CAI_DAT.bat
-echo         3. Chay lai CAI_DAT.bat - chuong trinh se tu dung bo cai do.
-goto :fail
-
 :fail_dest
 echo.
 echo [LOI] Khong the tao hoac ghi vao thu muc cai dat: %DEST%
@@ -139,7 +121,7 @@ goto :fail
 echo.
 echo [LOI] Khong tao duoc bieu tuong. Chuong trinh da duoc chep vao:
 echo       %DEST%
-echo       Ban van co the chay bang lenh: python "%DEST%\%APP_FILE%"
+echo       Ban van co the chay truc tiep file: "%DEST%\%EXE_NAME%"
 goto :fail
 
 :fail
@@ -160,63 +142,4 @@ for /f "tokens=1 delims=#" %%A in ("%LINE%") do set "LINE=%%A"
 for /f "tokens=* delims= " %%A in ("%LINE%") do set "LINE=%%A"
 if "%LINE%"=="" exit /b 0
 if /i "%LINE%"=="%MACHINE_CODE%" set "MACHINE_FOUND=1"
-exit /b 0
-
-rem ================= Ham: tim Python co Tkinter =================
-:find_python
-set "PYEXE="
-where py >nul 2>nul
-if errorlevel 1 goto :fp_where
-py -3 -c "import tkinter, sqlite3" >nul 2>nul
-if errorlevel 1 goto :fp_where
-set "PYEXE=py -3"
-exit /b 0
-:fp_where
-for /f "usebackq delims=" %%P in (`where python 2^>nul`) do call :try_python "%%~P"
-if defined PYEXE exit /b 0
-for /d %%D in ("%LOCALAPPDATA%\Programs\Python\Python3*" "%ProgramFiles%\Python3*") do call :try_python "%%~D\python.exe"
-exit /b 0
-
-:try_python
-if defined PYEXE exit /b 0
-set "CAND=%~1"
-if not exist "%CAND%" exit /b 0
-echo "%CAND%" | find /i "WindowsApps" >nul
-if not errorlevel 1 exit /b 0
-"%CAND%" -c "import tkinter, sqlite3" >nul 2>nul
-if errorlevel 1 exit /b 0
-set PYEXE="%CAND%"
-exit /b 0
-
-rem ================= Ham: cai dat Python =================
-:install_python
-set "PYINST="
-for %%F in ("%HERE%python-3*.exe") do set "PYINST=%%~fF"
-if not defined PYINST goto :ip_winget
-echo       Dung bo cai Python co san canh file cai dat: "%PYINST%"
-goto :ip_run
-
-:ip_winget
-where winget >nul 2>nul
-if errorlevel 1 goto :ip_download
-echo       Dang cai Python bang winget ...
-winget install -e --id Python.Python.3.12 --scope user --silent --accept-package-agreements --accept-source-agreements
-if not errorlevel 1 exit /b 0
-echo       Winget khong thanh cong, thu tai truc tiep tu python.org ...
-
-:ip_download
-set "ARCH=%PROCESSOR_ARCHITECTURE%"
-if defined PROCESSOR_ARCHITEW6432 set "ARCH=%PROCESSOR_ARCHITEW6432%"
-set "PYFILE=python-%PY_VER%-amd64.exe"
-if /i "%ARCH%"=="x86" set "PYFILE=python-%PY_VER%.exe"
-if /i "%ARCH%"=="ARM64" set "PYFILE=python-%PY_VER%-arm64.exe"
-set "QLCB_URL=https://www.python.org/ftp/python/%PY_VER%/%PYFILE%"
-set "PYINST=%TEMP%\%PYFILE%"
-echo       Dang tai %QLCB_URL% ...
-powershell -NoProfile -ExecutionPolicy Bypass -Command "try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -UseBasicParsing -Uri $env:QLCB_URL -OutFile $env:PYINST; exit 0 } catch { exit 1 }"
-if errorlevel 1 exit /b 1
-
-:ip_run
-echo       Dang cai dat Python (vui long doi 1-3 phut, khong tat cua so nay) ...
-start /wait "" "%PYINST%" /quiet InstallAllUsers=0 PrependPath=1 Include_launcher=1 Include_tcltk=1 Include_test=0 Shortcuts=0
 exit /b 0

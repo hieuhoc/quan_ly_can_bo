@@ -1,0 +1,33 @@
+PHAN MEM QUAN LY CAN BO - HUONG DAN CAI DAT (ban 4.x, file .exe)
+=================================================================
+
+Yeu cau: Windows 10 hoac Windows 11 ban 64-bit. KHONG can cai Python hay thu vien nao.
+
+CAI DAT / NANG CAP
+  1. Giai nen file zip nay ra mot thu muc bat ky.
+  2. Bam dup CAI_DAT.bat.
+     - Phan mem duoc cai vao %LOCALAPPDATA%\QuanLyCanBo, tao bieu tuong
+       "Quan Ly Can Bo" tren Desktop va Start Menu, roi tu mo phan mem.
+     - Neu may da cai ban cu (ban chay bang Python), du lieu cu (canbo.db,
+       backup, file dinh kem) duoc GIU NGUYEN va dung tiep ngay.
+  3. Lan dau: dang nhap admin / admin@123, phan mem se yeu cau doi mat khau.
+
+CHAY KHONG CAN CAI DAT (dung thu)
+  Mo thu muc QuanLyCanBo va bam dup QuanLyCanBo.exe. Du lieu se nam ngay
+  trong thu muc do.
+
+GIOI HAN MAY DUOC CAI (tuy chon)
+  - Tren tung may, bam dup XEM_MA_MAY.bat de lay ma may.
+  - Ghi cac ma may vao allowed_machines.example.txt, doi ten thanh
+    allowed_machines.txt, dat canh CAI_DAT.bat roi moi cai dat.
+
+QUEN MAT KHAU ADMIN
+  Mo cua so lenh trong thu muc cai dat va chay:
+      QuanLyCanBo.exe --reset-admin
+  (dat lai admin / admin@123, phai doi mat khau khi dang nhap)
+
+CO CAU TO CHUC
+  Don vi cua can bo chon theo: Cong an tinh / thanh pho -> Phong hoac
+  Cong an xa, phuong -> Doi / To (tu nhap). Mac dinh: Cong an tinh Hung Yen.
+  Quan tri vien sua danh muc phong cho dung co cau thuc te tai muc
+  "Cau hinh module" > "Co cau to chuc".

@@ -6,9 +6,10 @@ nguồn mở vietnam-provinces (danhmuchanhchinh.nso.gov.vn), phiên bản dữ
 liệu 2026-09-20. Chỉ nạp một lần, dùng chung cho toàn phần mềm.
 """
 import json
-import os
 
-_PATH = os.path.join(os.path.dirname(__file__), "data", "dia_gioi_hanh_chinh.json")
+from core.paths import resource
+
+_PATH = resource("core", "data", "dia_gioi_hanh_chinh.json")
 _cache = None
 
 

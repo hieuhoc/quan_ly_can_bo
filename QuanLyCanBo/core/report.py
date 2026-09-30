@@ -8,8 +8,9 @@ luôn hoạt động ngoại tuyến trên mọi máy đã cài Python + trình 
 import datetime
 import html
 import os
-import tempfile
 import webbrowser
+
+from core.paths import APP_DIR
 
 CSS = """
 @page { size: A4; margin: 20mm 18mm; }
@@ -115,9 +116,15 @@ def _wrap(title, meta_lines, body_html):
 </body></html>"""
 
 
+EXPORT_DIR = os.path.join(APP_DIR, "xuat_file")
+
+
 def open_html(html_str, filename_hint):
+    """Ghi vào thư mục xuat_file/ của phần mềm (không để hồ sơ cá nhân nằm
+    lại trong thư mục Temp dùng chung của Windows) rồi mở bằng trình duyệt."""
     safe = "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in filename_hint)
-    path = os.path.join(tempfile.gettempdir(), safe)
+    os.makedirs(EXPORT_DIR, exist_ok=True)
+    path = os.path.join(EXPORT_DIR, safe)
     with open(path, "w", encoding="utf-8") as f:
         f.write(html_str)
     webbrowser.open("file://" + path.replace(os.sep, "/"))

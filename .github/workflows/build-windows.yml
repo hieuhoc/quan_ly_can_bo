@@ -1,0 +1,81 @@
+# Đóng gói QuanLyCanBo.exe trên máy Windows của GitHub, tự kiểm tra rồi
+# đăng bộ cài (zip) lên mục Releases của kho mã nguồn.
+name: Build Windows exe
+
+on:
+  push:
+    branches: [main, master, "claude/**"]
+    paths:
+      - "QuanLyCanBo/**"
+      - "CAI_DAT.bat"
+      - "XEM_MA_MAY.bat"
+      - "packaging/**"
+      - ".github/workflows/build-windows.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  PYTHONIOENCODING: utf-8
+  PYTHONUTF8: "1"
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Cài thư viện
+        run: python -m pip install --upgrade pip && pip install -r QuanLyCanBo/requirements.txt
+
+      - name: Tự kiểm tra mã nguồn trên Windows
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python QuanLyCanBo/quan_ly_can_bo.py --kiem-tra
+
+      - name: Đóng gói bằng PyInstaller
+        working-directory: QuanLyCanBo
+        run: pyinstaller --noconfirm QuanLyCanBo.spec
+
+      - name: Tự kiểm tra file .exe
+        shell: pwsh
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          $p = Start-Process -FilePath "QuanLyCanBo\dist\QuanLyCanBo\QuanLyCanBo.exe" -ArgumentList "--kiem-tra" -Wait -PassThru
+          Get-Content "$env:TEMP\kiem_tra_quan_ly_can_bo.txt"
+          if ($p.ExitCode -ne 0) { throw "QuanLyCanBo.exe --kiem-tra that bai (ma $($p.ExitCode))" }
+
+      - name: Tạo bộ cài zip
+        id: pkg
+        shell: pwsh
+        run: |
+          $ver = (Select-String -Path QuanLyCanBo\ui\app.py -Pattern '^VERSION = "(.+)"').Matches[0].Groups[1].Value
+          $name = "QuanLyCanBo_v$ver"
+          $out = "release\$name"
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+          Copy-Item -Recurse "QuanLyCanBo\dist\QuanLyCanBo" "$out\QuanLyCanBo"
+          Copy-Item CAI_DAT.bat, XEM_MA_MAY.bat, allowed_machines.example.txt, packaging\HUONG_DAN.txt $out
+          Compress-Archive -Path "$out\*" -DestinationPath "release\$name.zip" -Force
+          "name=$name" >> $env:GITHUB_OUTPUT
+          "version=$ver" >> $env:GITHUB_OUTPUT
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.pkg.outputs.name }}
+          path: release/${{ steps.pkg.outputs.name }}.zip
+
+      - name: Đăng lên Releases
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "v${{ steps.pkg.outputs.version }}-build.${{ github.run_number }}"
+          $notes = "Bo cai dat Quan Ly Can Bo ${{ steps.pkg.outputs.version }} (Windows 10/11 64-bit). Giai nen roi chay CAI_DAT.bat. Build tu commit ${{ github.sha }} (nhanh ${{ github.ref_name }})."
+          gh release create $tag "release/${{ steps.pkg.outputs.name }}.zip" --target "${{ github.sha }}" --title "Quản Lý Cán Bộ ${{ steps.pkg.outputs.version }} (bản build ${{ github.run_number }})" --notes $notes --prerelease
