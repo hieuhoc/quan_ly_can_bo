@@ -6,6 +6,41 @@ from tkinter import ttk
 from core.theme import C, FONT
 
 
+def install_wheel_router(root):
+    """Con lăn chuột cuộn đúng vùng đang nằm dưới con trỏ, kể cả khi con trỏ
+    đang ở trên ô nhập / nhãn / nút bên trong vùng đó (trước đây chỉ cuộn
+    được khi trỏ vào đúng phần nền trống, nên biểu mẫu dài như Thêm cán bộ
+    phải phóng to cửa sổ mới xem hết được).
+
+    Vùng cuộn nào muốn nhận con lăn chỉ cần gán thuộc tính _wheel_scroll
+    (hàm nhận số bước +/-1...) cho widget của nó; bộ điều phối đi ngược từ
+    widget dưới con trỏ lên các widget cha để tìm vùng cuộn gần nhất."""
+    def route(e):
+        try:
+            w = e.widget.winfo_containing(e.x_root, e.y_root)
+        except (AttributeError, KeyError, tk.TclError):
+            return None
+        if e.num == 4:
+            steps = -1
+        elif e.num == 5:
+            steps = 1
+        else:
+            steps = -max(1, abs(e.delta) // 120) if e.delta > 0 else max(1, abs(e.delta) // 120)
+        while w is not None:
+            fn = getattr(w, "_wheel_scroll", None)
+            if fn is not None:
+                try:
+                    fn(steps)
+                except tk.TclError:
+                    pass
+                return "break"
+            w = w.master
+        return None
+
+    for seq in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
+        root.bind_all(seq, route)
+
+
 class ScrollableFrame(ttk.Frame):
     """Khung có thanh cuộn dọc, dùng cho biểu mẫu nhiều trường (cán bộ)."""
 
@@ -29,18 +64,13 @@ class ScrollableFrame(ttk.Frame):
         self.body.bind("<Configure>", on_body_config)
         self.canvas.bind("<Configure>", on_canvas_config)
 
-        def wheel(e):
-            delta = -1 if e.delta > 0 else 1
-            if e.num == 4:
-                delta = -1
-            elif e.num == 5:
-                delta = 1
-            self.canvas.yview_scroll(delta, "units")
+        # Nhận con lăn chuột qua install_wheel_router (xem trên).
+        self.canvas._wheel_scroll = self._scroll
 
-        for widget in (self.canvas, self.body):
-            widget.bind("<MouseWheel>", wheel)
-            widget.bind("<Button-4>", wheel)
-            widget.bind("<Button-5>", wheel)
+    def _scroll(self, steps):
+        top, bottom = self.canvas.yview()
+        if top > 0 or bottom < 1:       # chỉ cuộn khi nội dung dài hơn khung
+            self.canvas.yview_scroll(steps, "units")
 
 
 def section_label(parent, text):
@@ -116,7 +146,7 @@ class BorderedTable(ttk.Frame):
         self.body_canvas.bind("<Motion>", self._on_motion)
         self.body_canvas.bind("<Leave>", lambda e: self._set_hover(None))
         self.body_canvas.bind("<Configure>", lambda e: self._schedule_redraw())
-        self.body_canvas.bind("<MouseWheel>", self._on_wheel)
+        self.body_canvas._wheel_scroll = self._on_wheel
         self.header_canvas.bind("<Button-1>", self._on_header_click)
 
         self.tag_configure("odd", background=C["zebra"])
@@ -129,8 +159,10 @@ class BorderedTable(ttk.Frame):
         self.body_canvas.xview(*args)
         self.header_canvas.xview(*args)
 
-    def _on_wheel(self, e):
-        self.body_canvas.yview_scroll(-1 if e.delta > 0 else 1, "units")
+    def _on_wheel(self, steps):
+        top, bottom = self.body_canvas.yview()
+        if top > 0 or bottom < 1:
+            self.body_canvas.yview_scroll(steps, "units")
 
     # ---------------------------------------------------- vẽ
     def _total_width(self):

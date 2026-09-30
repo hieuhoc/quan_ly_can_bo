@@ -55,18 +55,27 @@ def _letterhead():
 
 
 def build_profile_html(title, sections, meta_lines, extra_tables=None):
-    """sections: [(tên nhóm, [(nhãn, giá_trị), ...]), ...].
+    """sections: [(tên nhóm, [(nhãn, giá_trị), ...]), ...]; mỗi nhóm có thể
+    kèm phần tử thứ ba (cột, hàng) để vẽ thêm bảng kẻ dòng ngay dưới các
+    trường của nhóm đó (vd Quá trình công tác: ngày vào ngành + các mốc).
     extra_tables: [(tên nhóm, [(khóa, nhãn), ...cột...], [hàng...]), ...] - vẽ
-    thêm bảng kẻ dòng (vd quá trình công tác) sau các nhóm thông tin chính."""
+    thêm bảng kẻ dòng sau các nhóm thông tin chính."""
     rows_html = []
-    for sec_title, fields in sections:
+    for sec in sections:
+        sec_title, fields = sec[0], sec[1]
+        table = sec[2] if len(sec) > 2 else None
         rows_html.append(f'<div class="section-title">{_esc(sec_title)}</div>')
-        rows_html.append('<table class="info">')
-        for label, value in fields:
-            rows_html.append(
-                f'<tr><td class="label">{_esc(label)}</td>'
-                f'<td class="value">{_esc(value) if value else "&nbsp;"}</td></tr>')
-        rows_html.append("</table>")
+        if fields:
+            rows_html.append('<table class="info">')
+            for label, value in fields:
+                rows_html.append(
+                    f'<tr><td class="label">{_esc(label)}</td>'
+                    f'<td class="value">{_esc(value) if value else "&nbsp;"}</td></tr>')
+            rows_html.append("</table>")
+        if table is not None:
+            columns, table_rows = table
+            rows_html.append(_render_table(columns, table_rows) if table_rows else
+                             '<p style="color:#666;font-size:10.5pt;">(chưa có)</p>')
     for sec_title, columns, table_rows in (extra_tables or []):
         rows_html.append(f'<div class="section-title">{_esc(sec_title)}</div>')
         rows_html.append(_render_table(columns, table_rows))

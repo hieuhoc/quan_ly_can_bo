@@ -85,7 +85,7 @@ class Database:
             CREATE TABLE IF NOT EXISTS qua_trinh_luong (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 can_bo_id INTEGER NOT NULL REFERENCES can_bo(id) ON DELETE CASCADE,
-                loai TEXT NOT NULL,           -- Nâng lương định kỳ / trước hạn / Thăng cấp bậc hàm
+                loai TEXT NOT NULL,           -- Hình thức: Định kỳ / Trước hạn (bản cũ: Nâng lương..., Thăng cấp...)
                 ngay_quyet_dinh TEXT,
                 so_quyet_dinh TEXT,
                 noi_dung TEXT NOT NULL,
@@ -179,6 +179,43 @@ class Database:
                 can_bo_id INTEGER NOT NULL REFERENCES can_bo(id) ON DELETE CASCADE,
                 tu_ngay TEXT, den_ngay TEXT, don_vi_cong_tac TEXT NOT NULL,
                 created_at TEXT DEFAULT (datetime('now','localtime'))
+            )""")
+        # v3.9: quyết định kèm theo từng mốc công tác (không bắt buộc)
+        have_ct = self._cols("qua_trinh_cong_tac")
+        for col in ("so_quyet_dinh", "ngay_ban_hanh", "nguoi_ky"):
+            if col not in have_ct:
+                self.conn.execute(f"ALTER TABLE qua_trinh_cong_tac ADD COLUMN {col} TEXT")
+        self.conn.execute(
+            """CREATE TABLE IF NOT EXISTS qua_trinh_hoc_tap (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                can_bo_id INTEGER NOT NULL REFERENCES can_bo(id) ON DELETE CASCADE,
+                tu_ngay TEXT, den_ngay TEXT, co_so_dao_tao TEXT NOT NULL,
+                chuyen_nganh TEXT, van_bang TEXT,
+                so_quyet_dinh TEXT, ngay_ban_hanh TEXT, nguoi_ky TEXT,
+                created_at TEXT DEFAULT (datetime('now','localtime'))
+            )""")
+        # v3.9: đơn vị ghi rõ Đội/Tổ (cột mới) rồi đến Phòng / Công an xã,
+        # phường (cột don_vi sẵn có). Cột cap_don_vi cũ giữ lại, không dùng nữa.
+        if "doi_to" not in self._cols("can_bo"):
+            self.conn.execute("ALTER TABLE can_bo ADD COLUMN doi_to TEXT")
+        # v3.9: nâng lương và thăng cấp là MỘT quyết định - thêm hệ số lương
+        # mới và người ký bên cạnh cấp bậc mới.
+        have_ql = self._cols("qua_trinh_luong")
+        for col in ("he_so_luong_moi", "nguoi_ky"):
+            if col not in have_ql:
+                self.conn.execute(f"ALTER TABLE qua_trinh_luong ADD COLUMN {col} TEXT")
+        # v3.9: lưu lại cán bộ đã xóa khỏi danh sách cùng lý do (điều chuyển
+        # đi kèm quyết định, hoặc lý do khác) và bản sao hồ sơ tại thời điểm xóa.
+        self.conn.execute(
+            """CREATE TABLE IF NOT EXISTS can_bo_da_xoa (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                thoi_gian TEXT, nguoi_thuc_hien TEXT,
+                ma_cb TEXT, ho_ten TEXT,
+                hinh_thuc TEXT NOT NULL,      -- Điều chuyển đi / Lý do khác
+                noi_den TEXT, ngay_dieu_chuyen TEXT,
+                so_quyet_dinh TEXT, ngay_ban_hanh TEXT, nguoi_ky TEXT, file_dinh_kem TEXT,
+                ly_do TEXT,
+                du_lieu TEXT                  -- JSON: hồ sơ + quá trình công tác/học tập
             )""")
         # Chuyển định dạng quyền phẳng của bản cũ (vd "add,edit") sang định dạng
         # theo từng module (vd "employees:view,add,edit").

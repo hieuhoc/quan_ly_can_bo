@@ -2,6 +2,8 @@
 """Module: Quản lý thông tin cán bộ."""
 import csv
 import datetime
+import json
+import os
 import re
 import sqlite3
 import tkinter as tk
@@ -15,8 +17,11 @@ from core.widgets import (DateEntry, DialogShell, FilterCombo, ProvinceWardPicke
 MODULE_ID = "employees"
 TABLE = "can_bo"
 
+SEC_CONG_TAC = "Quá trình công tác"
+SEC_HOC_TAP = "Quá trình học tập"
+
 # Mỗi trường: (khóa_CSDL, nhãn, loại)
-# loại: text | gender | date | rank | position | salary | province_ward
+# loại: text | gender | date | rank | position | salary | unit | province_ward
 SECTIONS = [
     ("Thông tin cá nhân", [
         ("ma_cb", "Mã cán bộ *", "text"),
@@ -33,12 +38,18 @@ SECTIONS = [
         ("cap_bac", "Cấp bậc", "rank"),
         ("chuc_vu", "Chức vụ", "position"),
         ("chuc_danh_hien_tai", "Chức danh hiện tại", "text"),
-        ("cap_don_vi", "Cấp đơn vị", "unit_level"),
-        ("don_vi", "Đơn vị", "text"),
+        # Đơn vị ghi rõ theo 2 cấp: Đội/Tổ trước, rồi Phòng hoặc Công an
+        # xã/phường (thay cho mục "Cấp đơn vị" chỉ ghi loại đơn vị trước đây).
+        ("doi_to", "Đội / Tổ", "unit"),
+        ("don_vi", "Phòng / Công an xã, phường", "unit"),
         ("he_so_luong", "Hệ số lương", "salary"),
     ]),
-    ("Quá trình công tác - Đảng", [
+    # Ngày vào ngành thuộc phần Quá trình công tác; bảng các mốc công tác
+    # được vẽ ngay dưới trường này (xem TIMELINES).
+    (SEC_CONG_TAC, [
         ("ngay_vao_nganh", "Ngày vào ngành", "date"),
+    ]),
+    ("Ngày vào Đảng", [
         ("ngay_vao_dang", "Ngày vào Đảng", "date"),
         ("ngay_chuyen_dang_chinh_thuc", "Ngày chuyển Đảng chính thức", "date"),
     ]),
@@ -47,6 +58,7 @@ SECTIONS = [
         ("trinh_do_chinh_tri", "Trình độ chính trị", "text"),
         ("trinh_do_ngoai_ngu", "Trình độ ngoại ngữ", "text"),
     ]),
+    (SEC_HOC_TAP, []),
     ("Ghi chú", [
         ("ghi_chu", "Ghi chú", "text"),
     ]),
@@ -73,11 +85,19 @@ ALL_FIELDS = [f for _sec, fields in SECTIONS_FLAT for f in fields]
 LABELS = {k: lbl for k, lbl, _t in ALL_FIELDS}
 DATE_FIELDS = [k for k, _l, t in ALL_FIELDS if t == "date"]
 
+# Nhãn ngắn cho tiêu đề cột bảng (nhãn đầy đủ quá dài)
+SHORT_LABELS = {"don_vi": "Phòng / Xã, phường"}
+
+
+def col_label(key):
+    return SHORT_LABELS.get(key) or LABELS[key].replace(" *", "").split(" (")[0]
+
+
 COLUMNS_SHOW = ["ma_cb", "ho_ten", "ngay_sinh", "gioi_tinh", "so_cccd", "sdt",
-                "cap_bac", "chuc_vu", "chuc_danh_hien_tai", "cap_don_vi", "don_vi", "he_so_luong",
+                "cap_bac", "chuc_vu", "chuc_danh_hien_tai", "doi_to", "don_vi", "he_so_luong",
                 "ngay_vao_nganh", "trinh_do_nghiep_vu", "trinh_do_chinh_tri", "trinh_do_ngoai_ngu", "ghi_chu"]
 COL_WIDTH = {"ma_cb": 82, "ho_ten": 150, "ngay_sinh": 88, "gioi_tinh": 62, "so_cccd": 100, "sdt": 100,
-             "cap_bac": 110, "chuc_vu": 120, "chuc_danh_hien_tai": 130, "cap_don_vi": 130, "don_vi": 140,
+             "cap_bac": 110, "chuc_vu": 120, "chuc_danh_hien_tai": 130, "doi_to": 130, "don_vi": 150,
              "he_so_luong": 80, "ngay_vao_nganh": 92, "trinh_do_nghiep_vu": 130, "trinh_do_chinh_tri": 110,
              "trinh_do_ngoai_ngu": 110, "ghi_chu": 160}
 
@@ -103,16 +123,30 @@ def _validate(data):
     return True
 
 
-def _build_form_fields(body, vars_, compound_widgets, on_rank_change):
+def _distinct_values(db, col):
+    """Các giá trị đã nhập của một cột (vd các Đội/Tổ) để gợi ý khi gõ."""
+    rows = db.conn.execute(f"SELECT DISTINCT {col} AS v FROM can_bo WHERE {col} IS NOT NULL AND {col}<>'' "
+                           "ORDER BY v COLLATE NOCASE").fetchall()
+    return [r["v"] for r in rows]
+
+
+def _build_form_fields(body, vars_, compound_widgets, on_rank_change, db=None, after_section=None):
     """Dựng các trường theo SECTIONS vào `body` (thân hộp thoại hoặc form).
     vars_: dict khóa CSDL đơn -> StringVar. compound_widgets: dict điền vào,
-    (cột_tỉnh, cột_xã) -> ProvinceWardPicker. Trả về dict khóa -> (widget, kind)."""
+    (cột_tỉnh, cột_xã) -> ProvinceWardPicker. after_section: dict tên mục ->
+    hàm(body) vẽ thêm nội dung ngay sau các trường của mục đó (vd bảng quá
+    trình công tác). Trả về dict khóa -> (widget, kind)."""
     widgets = {}
+    after_section = after_section or {}
     for title, fields in SECTIONS:
         section_label(body, title).pack(fill="x", pady=(10, 0))
         grid = ttk.Frame(body, style="Card.TFrame")
         grid.pack(fill="x")
         grid.columnconfigure(1, weight=1)
+        if title in after_section:
+            extra = ttk.Frame(body, style="Card.TFrame")
+            extra.pack(fill="x", pady=(4, 0))
+            after_section[title](extra)
         for i, (key, label, kind) in enumerate(fields):
             if kind == "province_ward":
                 ttk.Label(grid, text=label, style="Card.TLabel").grid(
@@ -133,9 +167,9 @@ def _build_form_fields(body, vars_, compound_widgets, on_rank_change):
                 w = FilterCombo(grid, values=cand_data.CHUC_VU_PHO_BIEN, width=25, textvariable=vars_[key])
             elif kind == "salary":
                 w = FilterCombo(grid, values=cand_data.HE_SO_LUONG_HOP_LE, width=25, textvariable=vars_[key])
-            elif kind == "unit_level":
-                w = ttk.Combobox(grid, textvariable=vars_[key], values=cand_data.CAP_DON_VI,
-                                 state="readonly", width=25)
+            elif kind == "unit":
+                w = FilterCombo(grid, values=_distinct_values(db, key) if db else [], width=25,
+                                textvariable=vars_[key])
             else:
                 w = ttk.Entry(grid, textvariable=vars_[key], width=28)
             w.grid(row=i, column=1, pady=4, sticky="ew")
@@ -143,32 +177,79 @@ def _build_form_fields(body, vars_, compound_widgets, on_rank_change):
     return widgets
 
 
-class CongTacEntryDialog(tk.Toplevel):
-    """Popup nhỏ: thêm một mốc quá trình công tác (từ ngày - đến ngày - đơn vị)."""
+# Các bảng "quá trình" gắn với một cán bộ. Mỗi trường: (khóa, nhãn, loại,
+# bắt buộc). Số quyết định / ngày ban hành / người ký đều KHÔNG bắt buộc.
+_QD_FIELDS = [("so_quyet_dinh", "Số quyết định", "text", False),
+              ("ngay_ban_hanh", "Ngày ban hành", "date", False),
+              ("nguoi_ky", "Người ký", "text", False)]
+TIMELINES = {
+    "cong_tac": dict(
+        table="qua_trinh_cong_tac", title=SEC_CONG_TAC, noun="mốc công tác", main="don_vi_cong_tac",
+        fields=[("tu_ngay", "Từ ngày", "date", False),
+                ("den_ngay", "Đến ngày\n(để trống nếu vẫn đang công tác)", "date", False),
+                ("don_vi_cong_tac", "Đơn vị công tác", "text", True)] + _QD_FIELDS,
+        cols=[("tu_ngay", "Từ ngày", 90), ("den_ngay", "Đến ngày", 90), ("don_vi_cong_tac", "Đơn vị công tác", 200),
+              ("so_quyet_dinh", "Số QĐ", 100), ("ngay_ban_hanh", "Ngày ban hành", 100), ("nguoi_ky", "Người ký", 120)]),
+    "hoc_tap": dict(
+        table="qua_trinh_hoc_tap", title=SEC_HOC_TAP, noun="mốc học tập", main="co_so_dao_tao",
+        fields=[("tu_ngay", "Từ ngày", "date", False),
+                ("den_ngay", "Đến ngày\n(để trống nếu vẫn đang học)", "date", False),
+                ("co_so_dao_tao", "Cơ sở đào tạo", "text", True),
+                ("chuyen_nganh", "Chuyên ngành / nội dung học", "text", False),
+                ("van_bang", "Văn bằng / chứng chỉ", "text", False)] + _QD_FIELDS,
+        cols=[("tu_ngay", "Từ ngày", 90), ("den_ngay", "Đến ngày", 90), ("co_so_dao_tao", "Cơ sở đào tạo", 170),
+              ("chuyen_nganh", "Chuyên ngành", 130), ("van_bang", "Văn bằng", 110),
+              ("so_quyet_dinh", "Số QĐ", 100), ("ngay_ban_hanh", "Ngày ban hành", 100), ("nguoi_ky", "Người ký", 120)]),
+}
 
-    def __init__(self, parent_widget, on_save):
+
+def timeline_rows(db, kind, can_bo_id):
+    """Các mốc của một cán bộ, sắp theo Từ ngày (đúng thứ tự thời gian)."""
+    cfg = TIMELINES[kind]
+    keys = ",".join(["id"] + [f[0] for f in cfg["fields"]])
+    rows = db.conn.execute(
+        f"SELECT {keys} FROM {cfg['table']} WHERE can_bo_id=? "
+        "ORDER BY (tu_ngay=='' OR tu_ngay IS NULL), "
+        "substr(tu_ngay,7,4)||substr(tu_ngay,4,2)||substr(tu_ngay,1,2), id", (can_bo_id,)).fetchall()
+    return [dict(r) for r in rows]
+
+
+def _display(key, val):
+    if key == "den_ngay":
+        return val or "(hiện tại)"
+    return val or "—"
+
+
+class TimelineEntryDialog(tk.Toplevel):
+    """Popup thêm / sửa một mốc quá trình công tác hoặc học tập."""
+
+    def __init__(self, parent_widget, kind, on_save, initial=None):
         super().__init__(parent_widget.winfo_toplevel())
+        self.cfg = TIMELINES[kind]
         self.on_save = on_save
-        shell = DialogShell(self, "Thêm mốc quá trình công tác", width=420, height=300, min_height=280)
+        n = len(self.cfg["fields"])
+        height = 170 + 50 * n
+        verb = "Sửa" if initial else "Thêm"
+        shell = DialogShell(self, f"{verb} {self.cfg['noun']}", width=480, height=height, min_height=300)
         form = shell.body
         form.columnconfigure(1, weight=1)
-        self.v_tu = tk.StringVar()
-        self.v_den = tk.StringVar()
-        self.v_donvi = tk.StringVar()
+        self.vars = {}
+        for r, (key, label, typ, required) in enumerate(self.cfg["fields"]):
+            v = tk.StringVar(value=(initial or {}).get(key) or "")
+            self.vars[key] = v
+            ttk.Label(form, text=label + (" *" if required else ""), style="Card.TLabel").grid(
+                row=r, column=0, sticky="w", pady=6, padx=(0, 10))
+            w = DateEntry(form, textvariable=v, width=18) if typ == "date" else \
+                ttk.Entry(form, textvariable=v, width=24)
+            w.grid(row=r, column=1, sticky="ew", pady=6)
+        ttk.Label(form, text="Các trường không có dấu * có thể để trống.", style="CardMuted.TLabel").grid(
+            row=n, column=0, columnspan=2, sticky="w", pady=(6, 0))
 
-        ttk.Label(form, text="Từ ngày", style="Card.TLabel").grid(row=0, column=0, sticky="w", pady=6, padx=(0, 10))
-        DateEntry(form, textvariable=self.v_tu, width=18).grid(row=0, column=1, sticky="ew", pady=6)
-        ttk.Label(form, text="Đến ngày\n(để trống nếu vẫn đang công tác)", style="Card.TLabel").grid(
-            row=1, column=0, sticky="w", pady=6, padx=(0, 10))
-        DateEntry(form, textvariable=self.v_den, width=18).grid(row=1, column=1, sticky="ew", pady=6)
-        ttk.Label(form, text="Đơn vị công tác *", style="Card.TLabel").grid(row=2, column=0, sticky="w", pady=6, padx=(0, 10))
-        ttk.Entry(form, textvariable=self.v_donvi, width=22).grid(row=2, column=1, sticky="ew", pady=6)
-
-        RoundedButton(shell.footer, text="➕  Thêm", command=self.save, variant="primary").pack(
-            side="left", fill="x", expand=True, padx=(0, 6))
+        RoundedButton(shell.footer, text="💾  Lưu" if initial else "➕  Thêm", command=self.save,
+                      variant="primary").pack(side="left", fill="x", expand=True, padx=(0, 6))
         RoundedButton(shell.footer, text="Hủy", command=self.destroy, variant="secondary").pack(
             side="left", fill="x", expand=True)
-        center(self, 420, 300)
+        center(self, 480, height)
         try:
             self.wait_visibility()
             self.grab_set()
@@ -176,91 +257,113 @@ class CongTacEntryDialog(tk.Toplevel):
             pass
 
     def save(self):
-        donvi = self.v_donvi.get().strip()
-        if not donvi:
-            messagebox.showwarning("Thiếu thông tin", "Vui lòng nhập Đơn vị công tác.", parent=self)
-            return
-        for label, val in (("Từ ngày", self.v_tu.get().strip()), ("Đến ngày", self.v_den.get().strip())):
-            if val:
+        data = {k: v.get().strip() for k, v in self.vars.items()}
+        for key, label, typ, required in self.cfg["fields"]:
+            name = label.split("\n")[0]
+            if required and not data[key]:
+                messagebox.showwarning("Thiếu thông tin", f"Vui lòng nhập {name}.", parent=self)
+                return
+            if typ == "date" and data[key]:
                 try:
-                    datetime.datetime.strptime(val, "%d/%m/%Y")
+                    datetime.datetime.strptime(data[key], "%d/%m/%Y")
                 except ValueError:
-                    messagebox.showwarning("Sai định dạng", f"{label} phải theo dạng dd/mm/yyyy.", parent=self)
+                    messagebox.showwarning("Sai định dạng", f"{name} phải theo dạng dd/mm/yyyy.", parent=self)
                     return
-        self.on_save(self.v_tu.get().strip(), self.v_den.get().strip(), donvi)
+        self.on_save(data)
         self.destroy()
 
 
-class CongTacSection(ttk.Frame):
-    """Danh sách quá trình công tác (từ ngày - đến ngày - đơn vị) kèm nút
-    thêm mốc mới. Nếu can_bo_id=None (đang tạo cán bộ mới, chưa có id),
-    các mốc được giữ tạm trong bộ nhớ - gọi flush_to_db(id_mới) ngay sau
-    khi cán bộ được tạo xong để ghi các mốc đó xuống CSDL. Nếu đã có
-    can_bo_id (đang sửa cán bộ có sẵn, hoặc đang xem hồ sơ), mọi thao tác
-    ghi thẳng xuống CSDL ngay lập tức."""
+class TimelineSection(ttk.Frame):
+    """Bảng quá trình (công tác / học tập) kèm nút Thêm / Sửa / Xóa mốc.
+    Nếu can_bo_id=None (đang tạo cán bộ mới, chưa có id), các mốc được giữ
+    tạm trong bộ nhớ - gọi flush_to_db(id_mới) ngay sau khi cán bộ được tạo
+    xong. Nếu đã có can_bo_id, mọi thao tác ghi thẳng xuống CSDL.
+    readonly=True: chỉ xem (tài khoản không có quyền Sửa cán bộ)."""
 
-    def __init__(self, parent, db, can_bo_id=None, height=4):
+    def __init__(self, parent, db, kind, can_bo_id=None, height=4, readonly=False):
         super().__init__(parent, style="Card.TFrame")
-        self.db = db
+        self.db, self.kind, self.cfg = db, kind, TIMELINES[kind]
         self.can_bo_id = can_bo_id
         self.pending = []
-        cols = [("tu_ngay", "Từ ngày", 90), ("den_ngay", "Đến ngày", 100), ("don_vi_cong_tac", "Đơn vị công tác", 240)]
-        self.tree, wrap = make_tree(self, cols, sortable=False)
+        self.tree, wrap = make_tree(self, self.cfg["cols"], sortable=False)
         self.tree.configure(height=height)
         wrap.pack(fill="x")
-        btn_row = ttk.Frame(self, style="Card.TFrame")
-        btn_row.pack(fill="x", pady=(6, 0))
-        RoundedButton(btn_row, text="➕  Thêm mốc công tác", command=self._add, variant="secondary").pack(side="left")
-        RoundedButton(btn_row, text="🗑  Xóa mốc đã chọn", command=self._delete, variant="secondary").pack(
-            side="left", padx=(6, 0))
+        if not readonly:
+            btn_row = ttk.Frame(self, style="Card.TFrame")
+            btn_row.pack(fill="x", pady=(6, 0))
+            RoundedButton(btn_row, text=f"➕  Thêm {self.cfg['noun']}", command=self._add,
+                          variant="secondary").pack(side="left")
+            RoundedButton(btn_row, text="✏  Sửa", command=self._edit, variant="secondary").pack(
+                side="left", padx=(6, 0))
+            RoundedButton(btn_row, text="🗑  Xóa", command=self._delete, variant="secondary").pack(
+                side="left", padx=(6, 0))
+            self.tree.bind("<Double-1>", lambda e: self._edit())
         self.refresh()
 
     def refresh(self):
         self.tree.delete(*self.tree.get_children())
         for i, r in enumerate(self._load_rows()):
             self.tree.insert("", "end", iid=str(r["id"]),
-                             values=(r["tu_ngay"] or "—", r["den_ngay"] or "(hiện tại)", r["don_vi_cong_tac"]),
+                             values=[_display(k, r.get(k)) for k, _l, _w in self.cfg["cols"]],
                              tags=("odd" if i % 2 else "even",))
 
     def _load_rows(self):
         if self.can_bo_id is not None:
-            rows = self.db.conn.execute(
-                "SELECT id, tu_ngay, den_ngay, don_vi_cong_tac FROM qua_trinh_cong_tac "
-                "WHERE can_bo_id=? ORDER BY (tu_ngay=='' OR tu_ngay IS NULL), tu_ngay", (self.can_bo_id,)).fetchall()
-            return [dict(r) for r in rows]
-        return [{"id": i, "tu_ngay": t, "den_ngay": d, "don_vi_cong_tac": u}
-               for i, (t, d, u) in enumerate(self.pending)]
+            return timeline_rows(self.db, self.kind, self.can_bo_id)
+        return [dict(d, id=i) for i, d in enumerate(self.pending)]
+
+    def _selected(self):
+        sel = self.tree.selection()
+        if not sel:
+            messagebox.showinfo("Chưa chọn", f"Hãy chọn một {self.cfg['noun']}.", parent=self.winfo_toplevel())
+            return None
+        return int(sel[0])
 
     def _add(self):
-        def on_save(tu, den, donvi):
+        def on_save(data):
             if self.can_bo_id is not None:
-                self.db.insert("qua_trinh_cong_tac",
-                               dict(can_bo_id=self.can_bo_id, tu_ngay=tu, den_ngay=den, don_vi_cong_tac=donvi))
+                self.db.insert(self.cfg["table"], dict(data, can_bo_id=self.can_bo_id))
             else:
-                self.pending.append((tu, den, donvi))
+                self.pending.append(data)
             self.refresh()
-        CongTacEntryDialog(self, on_save)
+        TimelineEntryDialog(self, self.kind, on_save)
+
+    def _edit(self):
+        idx = self._selected()
+        if idx is None:
+            return
+        if self.can_bo_id is not None:
+            row = self.db.fetch_one(self.cfg["table"], idx)
+            initial = dict(row) if row else None
+        else:
+            initial = self.pending[idx] if 0 <= idx < len(self.pending) else None
+        if not initial:
+            return
+
+        def on_save(data):
+            if self.can_bo_id is not None:
+                self.db.update(self.cfg["table"], idx, data, touch_updated=False)
+            else:
+                self.pending[idx] = data
+            self.refresh()
+        TimelineEntryDialog(self, self.kind, on_save, initial=initial)
 
     def _delete(self):
-        sel = self.tree.selection()
-        top = self.winfo_toplevel()
-        if not sel:
-            messagebox.showinfo("Chưa chọn", "Hãy chọn một mốc để xóa.", parent=top)
+        idx = self._selected()
+        if idx is None:
             return
-        if not messagebox.askyesno("Xác nhận xóa", "Xóa mốc công tác này?", parent=top):
+        if not messagebox.askyesno("Xác nhận xóa", f"Xóa {self.cfg['noun']} này?", parent=self.winfo_toplevel()):
             return
-        idx = int(sel[0])
         if self.can_bo_id is not None:
-            self.db.delete("qua_trinh_cong_tac", idx)
+            self.db.delete(self.cfg["table"], idx)
         elif 0 <= idx < len(self.pending):
             self.pending.pop(idx)
         self.refresh()
 
     def flush_to_db(self, can_bo_id):
         """Ghi các mốc đang chờ (khi tạo cán bộ mới) xuống CSDL sau khi đã có id."""
-        for tu, den, donvi in self.pending:
-            self.db.insert("qua_trinh_cong_tac",
-                           dict(can_bo_id=can_bo_id, tu_ngay=tu, den_ngay=den, don_vi_cong_tac=donvi))
+        for data in self.pending:
+            self.db.insert(self.cfg["table"], dict(data, can_bo_id=can_bo_id))
         self.pending = []
         self.can_bo_id = can_bo_id
 
@@ -312,8 +415,10 @@ class Panel(ttk.Frame):
         for b in (self.btn_add, self.btn_edit, self.btn_del, self.btn_profile,
                  self.btn_import, self.btn_export, self.btn_print_list):
             b.pack(side="left", padx=(0, 6))
+        RoundedButton(toolbar, text="🗂  Đã xóa / điều chuyển", command=self.show_deleted,
+                      variant="secondary").pack(side="right")
 
-        cols = [(k, LABELS[k].replace(" *", "").split(" (")[0], COL_WIDTH[k]) for k in COLUMNS_SHOW]
+        cols = [(k, col_label(k), COL_WIDTH[k]) for k in COLUMNS_SHOW]
         self.tree, wrap = make_tree(card, cols)
         wrap.pack(fill="both", expand=True)
         self.tree.bind("<<TreeviewSelect>>", self.on_select)
@@ -375,8 +480,8 @@ class Panel(ttk.Frame):
             conds.append("don_vi LIKE ?"); params.append(f"%{f['don_vi']}%")
         if f.get("cap_bac"):
             conds.append("cap_bac = ?"); params.append(f["cap_bac"])
-        if f.get("cap_don_vi"):
-            conds.append("cap_don_vi = ?"); params.append(f["cap_don_vi"])
+        if f.get("doi_to"):
+            conds.append("doi_to LIKE ?"); params.append(f"%{f['doi_to']}%")
         if f.get("chuc_vu"):
             conds.append("chuc_vu LIKE ?"); params.append(f"%{f['chuc_vu']}%")
         if f.get("gioi_tinh"):
@@ -426,15 +531,16 @@ class Panel(ttk.Frame):
             messagebox.showinfo("Chưa chọn", "Hãy chọn một cán bộ trong danh sách để xóa.")
             return
         row = self.db.fetch_one(TABLE, self.selected_id)
-        if messagebox.askyesno("Xác nhận xóa",
-                               f"Xóa cán bộ '{row['ho_ten']}'?\nCác dữ liệu phân loại, nâng lương, đơn thư liên "
-                               "quan cũng sẽ bị xóa theo.\nThao tác không thể hoàn tác."):
-            self.db.delete(TABLE, self.selected_id)
-            self.db.log(self.app.user["username"], "Xóa cán bộ", f"{row['ma_cb']} - {row['ho_ten']}")
-            self.selected_id = None
-            self.refresh()
-            self._refresh_button_states()
-            self.app.status.set("Đã xóa cán bộ.")
+        if row:
+            DeleteEmployeeDialog(self, row)
+
+    def after_delete(self):
+        self.selected_id = None
+        self.refresh()
+        self._refresh_button_states()
+
+    def show_deleted(self):
+        DeletedHistoryDialog(self.app)
 
     def export_csv(self):
         if self.deny("export"):
@@ -463,6 +569,7 @@ class Panel(ttk.Frame):
             return
         keys = [k for k, _l, _t in ALL_FIELDS]
         label_to_key = {LABELS[k].replace(" *", ""): k for k in keys}
+        label_to_key.setdefault("Đơn vị", "don_vi")  # tiêu đề cột của file CSV xuất từ bản cũ
         added = updated = skipped = 0
         errors = []
         try:
@@ -516,12 +623,186 @@ class Panel(ttk.Frame):
         keys = [k for k, _l, _t in ALL_FIELDS]
         rows = self._advanced_rows() if self.adv_filters else \
             self.db.fetch_all(TABLE, "ho_ten COLLATE NOCASE", self.search_var.get().strip(), keys)
-        columns = [(k, LABELS[k].replace(" *", "").split(" (")[0]) for k in COLUMNS_SHOW]
+        columns = [(k, col_label(k)) for k in COLUMNS_SHOW]
         meta = [f"Người xuất: {self.app.user['ho_ten'] or self.app.user['username']}",
                f"Số lượng: {len(rows)} cán bộ"]
         html_str = report.build_list_html("Danh sách cán bộ", meta, columns, rows)
         report.open_html(html_str, "danh_sach_can_bo.html")
         self.db.log(self.app.user["username"], "In danh sách", f"{len(rows)} cán bộ")
+
+
+DEL_DIEU_CHUYEN = "Điều chuyển công tác đi"
+DEL_KHAC = "Lý do khác"
+DELETED_TABLE = "can_bo_da_xoa"
+
+
+class DeleteEmployeeDialog(tk.Toplevel):
+    """Xóa cán bộ khỏi danh sách - BẮT BUỘC chọn lý do:
+    - Điều chuyển công tác đi: nhập nơi chuyển đến và quyết định điều động
+      (số QĐ, ngày ban hành, người ký, file QĐ nếu có);
+    - Lý do khác: bắt buộc ghi rõ lý do.
+    Hồ sơ (kèm quá trình công tác, học tập) được lưu lại vào bảng
+    can_bo_da_xoa trước khi xóa, xem lại ở nút "Đã xóa / điều chuyển"."""
+
+    def __init__(self, panel, row):
+        super().__init__(panel.app)
+        self.panel, self.db, self.row = panel, panel.db, row
+        self.pending_file = None
+        shell = DialogShell(self, f"Xóa cán bộ: {row['ho_ten']}", width=560, height=640, min_height=460)
+        form = shell.body
+        form.columnconfigure(1, weight=1)
+
+        ttk.Label(form, style="CardMuted.TLabel", wraplength=480, justify="left",
+                  text=f"Mã cán bộ: {row['ma_cb']}. Các dữ liệu phân loại, nâng lương - thăng cấp của cán bộ "
+                       "cũng bị xóa theo. Thông tin hồ sơ được lưu lại cùng lý do xóa.").grid(
+            row=0, column=0, columnspan=2, sticky="w", pady=(0, 8))
+
+        ttk.Label(form, text="Lý do xóa *", style="Section.TLabel").grid(row=1, column=0, columnspan=2, sticky="w")
+        self.v_kind = tk.StringVar(value=DEL_DIEU_CHUYEN)
+        for r, val in enumerate((DEL_DIEU_CHUYEN, DEL_KHAC), start=2):
+            ttk.Radiobutton(form, text=val, value=val, variable=self.v_kind, style="Card.TRadiobutton",
+                            command=self._switch).grid(row=r, column=0, columnspan=2, sticky="w", pady=2)
+
+        self.box_move = ttk.Frame(form, style="Card.TFrame")
+        self.box_move.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(10, 0))
+        self.box_move.columnconfigure(1, weight=1)
+        self.v = {k: tk.StringVar() for k in ("noi_den", "ngay_dieu_chuyen", "so_quyet_dinh",
+                                               "ngay_ban_hanh", "nguoi_ky")}
+        fields = [("noi_den", "Nơi chuyển đến *", "text"), ("ngay_dieu_chuyen", "Ngày điều chuyển", "date"),
+                  ("so_quyet_dinh", "Số quyết định *", "text"), ("ngay_ban_hanh", "Ngày ban hành", "date"),
+                  ("nguoi_ky", "Người ký", "text")]
+        for r, (key, label, typ) in enumerate(fields):
+            ttk.Label(self.box_move, text=label, style="Card.TLabel").grid(row=r, column=0, sticky="w",
+                                                                          pady=5, padx=(0, 10))
+            w = DateEntry(self.box_move, textvariable=self.v[key], width=18) if typ == "date" else \
+                ttk.Entry(self.box_move, textvariable=self.v[key], width=26)
+            w.grid(row=r, column=1, sticky="ew", pady=5)
+        ttk.Label(self.box_move, text="File quyết định", style="Card.TLabel").grid(
+            row=len(fields), column=0, sticky="w", pady=5, padx=(0, 10))
+        file_row = ttk.Frame(self.box_move, style="Card.TFrame")
+        file_row.grid(row=len(fields), column=1, sticky="ew", pady=5)
+        self.v_filename = tk.StringVar(value="(chưa có file)")
+        ttk.Label(file_row, textvariable=self.v_filename, style="CardMuted.TLabel", wraplength=200).pack(side="left")
+        RoundedButton(file_row, text="📎  Chọn file...", command=self._pick_file, variant="secondary").pack(
+            side="left", padx=(8, 0))
+
+        self.box_other = ttk.Frame(form, style="Card.TFrame")
+        self.box_other.columnconfigure(0, weight=1)
+        ttk.Label(self.box_other, text="Ghi rõ lý do *", style="Card.TLabel").grid(row=0, column=0, sticky="w")
+        self.txt_reason = tk.Text(self.box_other, height=5, width=40, font=("Segoe UI", 10), wrap="word",
+                                  highlightthickness=1, highlightbackground=C["border"], relief="flat")
+        self.txt_reason.grid(row=1, column=0, sticky="ew", pady=(4, 0))
+
+        RoundedButton(shell.footer, text="🗑  Xóa khỏi danh sách", command=self.confirm, variant="danger").pack(
+            side="left", fill="x", expand=True, padx=(0, 6))
+        RoundedButton(shell.footer, text="Hủy", command=self.destroy, variant="secondary").pack(
+            side="left", fill="x", expand=True)
+        center(self, 560, 640)
+        try:
+            self.wait_visibility()
+            self.grab_set()
+        except tk.TclError:
+            pass
+
+    def _switch(self):
+        if self.v_kind.get() == DEL_DIEU_CHUYEN:
+            self.box_other.grid_forget()
+            self.box_move.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(10, 0))
+        else:
+            self.box_move.grid_forget()
+            self.box_other.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(10, 0))
+            self.txt_reason.focus_set()
+
+    def _pick_file(self):
+        path = filedialog.askopenfilename(
+            parent=self, title="Chọn file quyết định",
+            filetypes=[("Tài liệu", "*.pdf *.doc *.docx *.jpg *.jpeg *.png"), ("Tất cả file", "*.*")])
+        if path:
+            self.pending_file = path
+            self.v_filename.set(os.path.basename(path))
+
+    def confirm(self):
+        kind = self.v_kind.get()
+        rec = dict(hinh_thuc=kind, ma_cb=self.row["ma_cb"], ho_ten=self.row["ho_ten"])
+        if kind == DEL_DIEU_CHUYEN:
+            data = {k: v.get().strip() for k, v in self.v.items()}
+            if not data["noi_den"] or not data["so_quyet_dinh"]:
+                messagebox.showwarning("Thiếu thông tin", "Vui lòng nhập Nơi chuyển đến và Số quyết định.",
+                                       parent=self)
+                return
+            for key, name in (("ngay_dieu_chuyen", "Ngày điều chuyển"), ("ngay_ban_hanh", "Ngày ban hành")):
+                if data[key]:
+                    try:
+                        datetime.datetime.strptime(data[key], "%d/%m/%Y")
+                    except ValueError:
+                        messagebox.showwarning("Sai định dạng", f"{name} phải theo dạng dd/mm/yyyy.", parent=self)
+                        return
+            rec.update(data)
+            detail = f"điều chuyển đến {data['noi_den']} theo QĐ {data['so_quyet_dinh']}"
+        else:
+            reason = self.txt_reason.get("1.0", "end").strip()
+            if not reason:
+                messagebox.showwarning("Thiếu thông tin", "Vui lòng ghi rõ lý do xóa.", parent=self)
+                return
+            rec["ly_do"] = reason
+            detail = f"lý do: {reason}"
+        if not messagebox.askyesno("Xác nhận xóa",
+                                   f"Xóa cán bộ '{self.row['ho_ten']}' khỏi danh sách ({detail})?", parent=self):
+            return
+
+        app = self.panel.app
+        snapshot = {k: self.row[k] for k in self.row.keys()}
+        snapshot["qua_trinh_cong_tac"] = timeline_rows(self.db, "cong_tac", self.row["id"])
+        snapshot["qua_trinh_hoc_tap"] = timeline_rows(self.db, "hoc_tap", self.row["id"])
+        if kind == DEL_DIEU_CHUYEN and self.pending_file:
+            from core import attachments
+            rec["file_dinh_kem"] = attachments.save_attachment(app.app_dir, DELETED_TABLE, self.pending_file)
+        rec.update(thoi_gian=datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                   nguoi_thuc_hien=app.user["username"],
+                   du_lieu=json.dumps(snapshot, ensure_ascii=False))
+        self.db.insert(DELETED_TABLE, rec)
+        self.db.delete(TABLE, self.row["id"])
+        self.db.log(app.user["username"], "Xóa cán bộ", f"{self.row['ma_cb']} - {self.row['ho_ten']} ({detail})")
+        app.status.set("Đã xóa cán bộ khỏi danh sách.")
+        self.panel.after_delete()
+        self.destroy()
+
+
+class DeletedHistoryDialog(tk.Toplevel):
+    """Danh sách cán bộ đã xóa khỏi danh sách (điều chuyển đi / lý do khác)."""
+
+    COLS = [("thoi_gian", "Thời gian xóa", 140), ("ma_cb", "Mã CB", 80), ("ho_ten", "Họ và tên", 160),
+            ("hinh_thuc", "Lý do", 160), ("chi_tiet", "Nơi đến / Lý do cụ thể", 220),
+            ("so_quyet_dinh", "Số QĐ", 100), ("ngay_ban_hanh", "Ngày ban hành", 100),
+            ("nguoi_ky", "Người ký", 120), ("file", "File QĐ", 70), ("nguoi_thuc_hien", "Người xóa", 100)]
+
+    def __init__(self, app):
+        super().__init__(app)
+        self.app = app
+        shell = DialogShell(self, "Cán bộ đã xóa / điều chuyển đi", width=980, height=520, min_height=360)
+        self.tree, wrap = make_tree(shell.body, self.COLS)
+        wrap.pack(fill="both", expand=True)
+        self.rows = {}
+        for i, r in enumerate(app.db.conn.execute(f"SELECT * FROM {DELETED_TABLE} ORDER BY id DESC")):
+            self.rows[str(r["id"])] = r
+            chi_tiet = r["noi_den"] if r["hinh_thuc"] == DEL_DIEU_CHUYEN else r["ly_do"]
+            self.tree.insert("", "end", iid=str(r["id"]), tags=("odd" if i % 2 else "even",), values=(
+                r["thoi_gian"], r["ma_cb"], r["ho_ten"], r["hinh_thuc"], chi_tiet or "",
+                r["so_quyet_dinh"] or "", r["ngay_ban_hanh"] or "", r["nguoi_ky"] or "",
+                "📎 Có" if r["file_dinh_kem"] else "—", r["nguoi_thuc_hien"] or ""))
+        self.tree.bind("<Double-1>", lambda e: self.open_file())
+        RoundedButton(shell.footer, text="📎  Mở file quyết định", command=self.open_file,
+                      variant="secondary").pack(side="left")
+        RoundedButton(shell.footer, text="Đóng", command=self.destroy, variant="primary").pack(side="right")
+        center(self, 980, 520)
+
+    def open_file(self):
+        sel = self.tree.selection()
+        r = self.rows.get(sel[0]) if sel else None
+        if r and r["file_dinh_kem"]:
+            from core import attachments
+            if not attachments.open_file(self.app.app_dir, r["file_dinh_kem"]):
+                messagebox.showwarning("Không mở được file", "Không tìm thấy file quyết định.", parent=self)
 
 
 class AdvancedSearchDialog(tk.Toplevel):
@@ -534,7 +815,7 @@ class AdvancedSearchDialog(tk.Toplevel):
         form = shell.body
         form.columnconfigure(1, weight=1)
         self.v = {k: tk.StringVar(value=panel.adv_filters.get(k, "")) for k in
-                 ("ma_cb", "ho_ten", "don_vi", "cap_bac", "cap_don_vi", "chuc_vu", "gioi_tinh", "que_quan_tinh")}
+                 ("ma_cb", "ho_ten", "doi_to", "don_vi", "cap_bac", "chuc_vu", "gioi_tinh", "que_quan_tinh")}
 
         def row(r, label, widget):
             ttk.Label(form, text=label, style="Card.TLabel").grid(row=r, column=0, sticky="w", pady=6, padx=(0, 10))
@@ -542,11 +823,10 @@ class AdvancedSearchDialog(tk.Toplevel):
 
         row(0, "Mã cán bộ", ttk.Entry(form, textvariable=self.v["ma_cb"], width=26))
         row(1, "Họ và tên", ttk.Entry(form, textvariable=self.v["ho_ten"], width=26))
-        row(2, "Đơn vị", ttk.Entry(form, textvariable=self.v["don_vi"], width=26))
-        row(3, "Cấp bậc", ttk.Combobox(form, textvariable=self.v["cap_bac"],
+        row(2, "Đội / Tổ", ttk.Entry(form, textvariable=self.v["doi_to"], width=26))
+        row(3, "Phòng / Xã, phường", ttk.Entry(form, textvariable=self.v["don_vi"], width=26))
+        row(4, "Cấp bậc", ttk.Combobox(form, textvariable=self.v["cap_bac"],
                                        values=[""] + cand_data.CAP_BAC, state="readonly", width=24))
-        row(4, "Cấp đơn vị", ttk.Combobox(form, textvariable=self.v["cap_don_vi"],
-                                          values=[""] + cand_data.CAP_DON_VI, state="readonly", width=24))
         row(5, "Chức vụ", ttk.Entry(form, textvariable=self.v["chuc_vu"], width=26))
         row(6, "Giới tính", ttk.Combobox(form, textvariable=self.v["gioi_tinh"],
                                          values=["", "Nam", "Nữ"], state="readonly", width=24))
@@ -585,14 +865,22 @@ class EmployeeFormDialog(tk.Toplevel):
         self.panel, self.db, self.row = panel, panel.db, row
         is_edit = row is not None
         title = f"Sửa thông tin: {row['ho_ten']}" if is_edit else "Thêm cán bộ mới"
-        shell = DialogShell(self, title, width=640, height=700)
+        shell = DialogShell(self, title, width=720, height=720)
         self.vars = {k: tk.StringVar() for k, _l, _t in ALL_FIELDS}
         self.compound_widgets = {}
-        self.widgets = _build_form_fields(shell.body, self.vars, self.compound_widgets, self._on_rank_change)
+        self.timelines = {}
+        cb_id = row["id"] if is_edit else None
 
-        section_label(shell.body, "Quá trình công tác").pack(fill="x", pady=(10, 4))
-        self.cong_tac = CongTacSection(shell.body, self.db, can_bo_id=(row["id"] if is_edit else None))
-        self.cong_tac.pack(fill="x")
+        def timeline(kind):
+            def build(parent):
+                sec = TimelineSection(parent, self.db, kind, can_bo_id=cb_id)
+                sec.pack(fill="x")
+                self.timelines[kind] = sec
+            return build
+
+        self.widgets = _build_form_fields(
+            shell.body, self.vars, self.compound_widgets, self._on_rank_change, db=self.db,
+            after_section={SEC_CONG_TAC: timeline("cong_tac"), SEC_HOC_TAP: timeline("hoc_tap")})
 
         if is_edit:
             for k in self.vars:
@@ -604,7 +892,7 @@ class EmployeeFormDialog(tk.Toplevel):
         RoundedButton(shell.footer, text=save_label, command=self.save, variant="primary").pack(side="left", fill="x", expand=True, padx=(0, 6))
         RoundedButton(shell.footer, text="Hủy", command=self.destroy, variant="secondary").pack(side="left", fill="x", expand=True)
 
-        center(self, 640, 700)
+        center(self, 720, 720)
         try:
             self.wait_visibility()
             self.grab_set()
@@ -627,7 +915,8 @@ class EmployeeFormDialog(tk.Toplevel):
         try:
             if self.row is None:
                 new_id = self.db.insert(TABLE, data)
-                self.cong_tac.flush_to_db(new_id)
+                for sec in self.timelines.values():
+                    sec.flush_to_db(new_id)
                 self.db.log(self.panel.app.user["username"], "Thêm cán bộ", f"{data['ma_cb']} - {data['ho_ten']}")
                 self.panel.app.status.set("Đã thêm cán bộ mới.")
             else:
@@ -663,6 +952,10 @@ class ProfileDialog(tk.Toplevel):
         scroll = ScrollableFrame(self, width=600)
         scroll.pack(fill="both", expand=True, padx=14, pady=10)
         body = scroll.body
+        # Chỉ tài khoản có quyền Sửa cán bộ mới được thêm/sửa/xóa các mốc
+        # quá trình ngay trong màn hình hồ sơ.
+        readonly = not app.can(MODULE_ID, "edit")
+        section_kind = {SEC_CONG_TAC: "cong_tac", SEC_HOC_TAP: "hoc_tap"}
         for sec_title, fields in SECTIONS_FLAT:
             sec = ttk.Frame(body, style="Card.TFrame", padding=(4, 8))
             sec.pack(fill="x")
@@ -675,32 +968,34 @@ class ProfileDialog(tk.Toplevel):
                          width=30, anchor="w").grid(row=i, column=0, sticky="w", pady=3)
                 ttk.Label(grid, text=val, style="Card.TLabel", font=("Segoe UI", 10, "bold"),
                          wraplength=340, justify="left").grid(row=i, column=1, sticky="w", pady=3)
-
-        ct_sec = ttk.Frame(body, style="Card.TFrame", padding=(4, 8))
-        ct_sec.pack(fill="x")
-        ttk.Label(ct_sec, text="Quá trình công tác", style="Section.TLabel").pack(anchor="w")
-        self.cong_tac = CongTacSection(ct_sec, self.app.db, can_bo_id=row["id"], height=6)
-        self.cong_tac.pack(fill="x", pady=(4, 4))
+            if sec_title in section_kind:
+                TimelineSection(sec, self.app.db, section_kind[sec_title], can_bo_id=row["id"],
+                                height=4, readonly=readonly).pack(fill="x", pady=(4, 4))
 
         btns = ttk.Frame(self, padding=(14, 8))
         btns.pack(fill="x")
-        RoundedButton(btns, text="🖨  Xuất hồ sơ (HTML để in)", command=self.export_html, variant="primary").pack(side="left")
+        btn_print = RoundedButton(btns, text="🖨  Xuất hồ sơ (HTML để in)", command=self.export_html, variant="primary")
+        btn_print.pack(side="left")
+        if not app.can(MODULE_ID, "export"):
+            btn_print.state(["disabled"])
         RoundedButton(btns, text="Đóng", command=self.destroy, variant="secondary").pack(side="right")
 
     def export_html(self):
         import core.report as report
-        sections = [(sec, [(lbl.replace(" *", ""), self.row[key] or "") for key, lbl, _t in fields])
-                   for sec, fields in SECTIONS_FLAT]
-        meta = [f"Đơn vị: {self.row['don_vi'] or '—'}",
+        section_kind = {SEC_CONG_TAC: "cong_tac", SEC_HOC_TAP: "hoc_tap"}
+        sections = []
+        for sec, fields in SECTIONS_FLAT:
+            item = [sec, [(lbl.replace(" *", ""), self.row[key] or "") for key, lbl, _t in fields]]
+            if sec in section_kind:
+                cfg = TIMELINES[section_kind[sec]]
+                rows = [{k: _display(k, r.get(k)) for k, _l, _w in cfg["cols"]}
+                        for r in timeline_rows(self.app.db, section_kind[sec], self.row["id"])]
+                item.append(([(k, lbl) for k, lbl, _w in cfg["cols"]], rows))
+            sections.append(tuple(item))
+        don_vi = ", ".join(x for x in (self.row["doi_to"], self.row["don_vi"]) if x) or "—"
+        meta = [f"Đơn vị: {don_vi}",
                f"Người xuất: {self.app.user['ho_ten'] or self.app.user['username']}"]
-        ct_rows = self.app.db.conn.execute(
-            "SELECT tu_ngay, den_ngay, don_vi_cong_tac FROM qua_trinh_cong_tac "
-            "WHERE can_bo_id=? ORDER BY (tu_ngay=='' OR tu_ngay IS NULL), tu_ngay", (self.row["id"],)).fetchall()
-        ct_cols = [("tu_ngay", "Từ ngày"), ("den_ngay", "Đến ngày"), ("don_vi_cong_tac", "Đơn vị công tác")]
-        ct_display = [{"tu_ngay": r["tu_ngay"] or "—", "den_ngay": r["den_ngay"] or "(hiện tại)",
-                      "don_vi_cong_tac": r["don_vi_cong_tac"]} for r in ct_rows]
-        extra = [("Quá trình công tác", ct_cols, ct_display)] if ct_display else []
-        html_str = report.build_profile_html(f"Hồ sơ cán bộ: {self.row['ho_ten']}", sections, meta, extra_tables=extra)
+        html_str = report.build_profile_html(f"Hồ sơ cán bộ: {self.row['ho_ten']}", sections, meta)
         path = report.open_html(html_str, f"ho_so_{self.row['ma_cb']}.html")
         self.app.db.log(self.app.user["username"], "In hồ sơ cán bộ",
                         f"{self.row['ma_cb']} - {self.row['ho_ten']}")

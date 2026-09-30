@@ -96,6 +96,9 @@ def setup_style(root):
                  indicatorforeground=C["primary"], bordercolor=C["neutral_border"])
     st.map("Card.TCheckbutton", background=[("active", C["card"])],
            indicatorbackground=[("selected", C["primary_soft"])])
+    st.configure("Card.TRadiobutton", background=C["card"], indicatorbackground="white",
+                 indicatorforeground=C["primary"], bordercolor=C["neutral_border"])
+    st.map("Card.TRadiobutton", background=[("active", C["card"])])
     st.configure("TNotebook", background=C["bg"], borderwidth=0)
     st.configure("TNotebook.Tab", padding=(16, 8), font=(FONT, 10, "bold"), background=C["neutral_lighter"],
                  foreground=C["muted"], bordercolor=C["border"])

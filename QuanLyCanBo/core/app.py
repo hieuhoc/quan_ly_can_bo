@@ -11,10 +11,10 @@ from tkinter import messagebox, ttk
 from core import registry
 from core.security import check_password_policy
 from core.theme import C, FONT, center, draw_shield, setup_style
-from core.widgets import RoundedButton
+from core.widgets import RoundedButton, install_wheel_router
 
 APP_TITLE = "QUẢN LÝ CÁN BỘ"
-VERSION = "3.8"
+VERSION = "3.9"
 BACKUP_INTERVAL_MIN = 30
 IDLE_TIMEOUT_MIN = 15
 ROLES = {"admin": "Quản trị viên", "user": "Người dùng"}
@@ -38,6 +38,7 @@ class App(tk.Tk):
         self.container.pack(fill="both", expand=True)
         for ev in ("<Any-KeyPress>", "<Any-ButtonPress>", "<Motion>"):
             self.bind_all(ev, self._touch, add="+")
+        install_wheel_router(self)
         self.protocol("WM_DELETE_WINDOW", self.on_close)
 
         # Luôn hiện màn hình đăng nhập khi mở phần mềm (đăng xuất khi đóng

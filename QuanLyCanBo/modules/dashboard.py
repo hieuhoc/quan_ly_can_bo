@@ -37,9 +37,7 @@ class Panel(ttk.Frame):
         body.bind("<Configure>", lambda e: outer.configure(scrollregion=outer.bbox("all")))
         outer.bind("<Configure>", lambda e: outer.itemconfigure(win, width=e.width))
 
-        def wheel(e):
-            outer.yview_scroll(-1 if e.delta > 0 else 1, "units")
-        outer.bind_all("<MouseWheel>", wheel, add="+")
+        outer._wheel_scroll = lambda steps: outer.yview_scroll(steps, "units")
 
         u = self.app.user
         ttk.Label(body, text=f"Chào {u['ho_ten'] or u['username']}, chúc một ngày làm việc hiệu quả.",

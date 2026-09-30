@@ -1,11 +1,13 @@
 # -*- coding: utf-8 -*-
-"""Module: Nâng lương và Thăng cấp bậc hàm.
+"""Module: Nâng lương - Thăng cấp bậc hàm.
 
-Hai loại quyết định này vẫn là hai quá trình độc lập (có thể lệch năm,
-không bắt buộc đi cùng nhau) nhưng được hiển thị chung trong MỘT bảng duy
-nhất, sắp theo ngày quyết định - xem được toàn bộ diễn biến lương/cấp bậc
-của cán bộ theo thời gian. Bộ lọc nhanh phía trên cho phép chỉ xem riêng
-Nâng lương hoặc riêng Thăng cấp bậc hàm khi cần."""
+Nâng lương và thăng cấp bậc hàm là MỘT quá trình không tách rời: mỗi bản
+ghi là một quyết định, ghi cấp bậc mới và hệ số lương mới của cán bộ (có
+thể chỉ thay đổi một trong hai). Tất cả nằm trong một bảng, sắp theo ngày
+quyết định mới nhất lên đầu.
+
+Dữ liệu từ bản cũ (loại "Nâng lương định kỳ / trước hạn", "Thăng cấp bậc
+hàm") vẫn hiển thị nguyên như trước trong cột Hình thức."""
 import csv
 import datetime
 import os
@@ -14,23 +16,17 @@ from tkinter import filedialog, messagebox, ttk
 
 from core import attachments, cand_data
 from core.theme import C, center, make_card
-from core.widgets import DateEntry, DialogShell, EmployeePicker, RoundedButton, TabBar, make_tree
+from core.widgets import DateEntry, DialogShell, EmployeePicker, FilterCombo, RoundedButton, make_tree
 
 MODULE_ID = "salary"
 TABLE = "qua_trinh_luong"
 TITLE = "Nâng lương - Thăng cấp"
-LOAI_NANG_LUONG = ["Nâng lương định kỳ", "Nâng lương trước hạn"]
-LOAI_THANG_CAP = ["Thăng cấp bậc hàm"]
-LOAI_OPTIONS = LOAI_NANG_LUONG + LOAI_THANG_CAP
+HINH_THUC = ["Định kỳ", "Trước hạn"]
 
-# Bộ lọc nhanh: (khóa, nhãn, danh sách loại được hiển thị)
-QUICK_FILTERS = [("all", "Tất cả", LOAI_OPTIONS),
-                 ("luong", "Nâng lương", LOAI_NANG_LUONG),
-                 ("capbac", "Thăng cấp bậc hàm", LOAI_THANG_CAP)]
-
-COLS = [("ma_cb", "Mã CB", 80), ("ho_ten", "Cán bộ", 160), ("loai", "Loại", 180),
-        ("ngay_quyet_dinh", "Ngày QĐ", 112), ("so_quyet_dinh", "Số quyết định", 140),
-        ("cap_bac_moi", "Cấp bậc mới", 120), ("noi_dung", "Nội dung", 200), ("file_dinh_kem", "File", 70)]
+COLS = [("ma_cb", "Mã CB", 80), ("ho_ten", "Cán bộ", 160), ("loai", "Hình thức", 100),
+        ("ngay_quyet_dinh", "Ngày QĐ", 100), ("so_quyet_dinh", "Số quyết định", 130),
+        ("cap_bac_moi", "Cấp bậc mới", 110), ("he_so_luong_moi", "Hệ số lương mới", 110),
+        ("nguoi_ky", "Người ký", 120), ("noi_dung", "Nội dung", 180), ("file_dinh_kem", "File", 70)]
 
 
 def _date_key(col):
@@ -57,14 +53,9 @@ class Panel(ttk.Frame):
         self.count_var = tk.StringVar()
         self.adv_filters = {}
         self.adv_note = tk.StringVar()
-        self.quick = "all"
         self._build()
         self._refresh_button_states()
         self.refresh()
-
-    @property
-    def loai_values(self):
-        return next(v for k, _l, v in QUICK_FILTERS if k == self.quick)
 
     def _build(self):
         lo, card = make_card(self, padding=16)
@@ -73,10 +64,7 @@ class Panel(ttk.Frame):
         top.pack(fill="x")
         ttk.Label(top, text="Nâng lương - Thăng cấp bậc hàm", style="CardTitle.TLabel").pack(side="left")
         ttk.Label(top, textvariable=self.count_var, style="CardMuted.TLabel").pack(side="right")
-
-        self.tabs = TabBar(card, [(k, label) for k, label, _v in QUICK_FILTERS],
-                           command=self.set_quick, selected=self.quick)
-        self.tabs.pack(fill="x", pady=(12, 14))
+        tk.Frame(card, height=1, bg=C["border"]).pack(fill="x", pady=(10, 12))
 
         bar = ttk.Frame(card, style="Card.TFrame")
         bar.pack(fill="x", pady=(0, 4))
@@ -104,17 +92,9 @@ class Panel(ttk.Frame):
 
         self.tree, wrap = make_tree(card, COLS)
         wrap.pack(fill="both", expand=True)
-        self.tree.tag_configure("promo", foreground=C["blue"])
         self.tree.bind("<<TreeviewSelect>>", self.on_select)
         self.tree.bind("<Delete>", lambda e: self.on_delete())
         self.tree.bind("<Double-1>", lambda e: self.open_edit())
-
-    def set_quick(self, key):
-        self.quick = key
-        self.tabs.select(key)
-        self.selected_id = None
-        self.refresh()
-        self._refresh_button_states()
 
     def _refresh_button_states(self):
         has_sel = self.selected_id is not None
@@ -159,15 +139,9 @@ class Panel(ttk.Frame):
         self.refresh()
 
     def _rows(self):
-        """Các bản ghi của nhóm (tab) đang chọn, đã áp bộ lọc tìm kiếm."""
-        return [r for r in self._rows_all() if r["loai"] in self.loai_values]
-
-    def _rows_all(self):
-        """Mọi loại quyết định, đã áp bộ lọc tìm kiếm - dùng để đếm từng tab."""
-        placeholders = ",".join("?" * len(LOAI_OPTIONS))
-        sql = (f"SELECT q.*, c.ho_ten AS ho_ten, c.ma_cb AS ma_cb FROM qua_trinh_luong q "
-               f"JOIN can_bo c ON c.id = q.can_bo_id WHERE q.loai IN ({placeholders})")
-        params = list(LOAI_OPTIONS)
+        sql = ("SELECT q.*, c.ho_ten AS ho_ten, c.ma_cb AS ma_cb FROM qua_trinh_luong q "
+               "JOIN can_bo c ON c.id = q.can_bo_id WHERE 1=1")
+        params = []
         if self.adv_filters:
             f = self.adv_filters
             if f.get("ho_ten"):
@@ -180,23 +154,20 @@ class Panel(ttk.Frame):
                 sql += " AND q.cap_bac_moi = ?"; params.append(f["cap_bac_moi"])
         elif self.search_var.get().strip():
             like = f"%{self.search_var.get().strip()}%"
-            sql += " AND (c.ho_ten LIKE ? OR c.ma_cb LIKE ? OR q.noi_dung LIKE ? OR q.so_quyet_dinh LIKE ?)"
-            params.extend([like] * 4)
+            sql += (" AND (c.ho_ten LIKE ? OR c.ma_cb LIKE ? OR q.noi_dung LIKE ? OR q.so_quyet_dinh LIKE ?"
+                    " OR q.cap_bac_moi LIKE ? OR q.nguoi_ky LIKE ?)")
+            params.extend([like] * 6)
         sql += (" ORDER BY (q.ngay_quyet_dinh IS NULL OR q.ngay_quyet_dinh==''), "
                 f"{_date_key('q.ngay_quyet_dinh')} DESC, q.created_at DESC")
         return self.db.conn.execute(sql, params).fetchall()
 
     def refresh(self):
-        all_rows = self._rows_all()
-        for key, _label, loai in QUICK_FILTERS:
-            self.tabs.set_count(key, sum(1 for r in all_rows if r["loai"] in loai))
-        rows = [r for r in all_rows if r["loai"] in self.loai_values]
+        rows = self._rows()
         self.tree.delete(*self.tree.get_children())
         for i, r in enumerate(rows):
             vals = [r[c[0]] or "" for c in COLS[:-1]] + ["📎 Có" if r["file_dinh_kem"] else "—"]
-            tags = ["odd" if i % 2 else "even"] + (["promo"] if r["loai"] in LOAI_THANG_CAP else [])
-            self.tree.insert("", "end", iid=str(r["id"]), values=vals, tags=tags)
-        self.count_var.set(f"Đang hiển thị {len(rows)} quyết định")
+            self.tree.insert("", "end", iid=str(r["id"]), values=vals, tags=("odd" if i % 2 else "even",))
+        self.count_var.set(f"Tổng số: {len(rows)} quyết định")
 
     def on_select(self, _=None):
         sel = self.tree.selection()
@@ -235,7 +206,7 @@ class Panel(ttk.Frame):
             if row and row["file_dinh_kem"]:
                 attachments.delete_attachment(self.app.app_dir, row["file_dinh_kem"])
             self.db.delete(TABLE, self.selected_id)
-            self.db.log(self.app.user["username"], f"Xóa quyết định {(row['loai'] if row else '').lower()}",
+            self.db.log(self.app.user["username"], "Xóa quyết định nâng lương - thăng cấp",
                         f"id={self.selected_id}")
             self.selected_id = None
             self.refresh()
@@ -253,11 +224,12 @@ class Panel(ttk.Frame):
         rows = self._rows()
         with open(path, "w", newline="", encoding="utf-8-sig") as f:
             w = csv.writer(f)
-            w.writerow(["Mã cán bộ", "Họ và tên", "Loại", "Ngày quyết định", "Số quyết định",
-                        "Cấp bậc mới", "Nội dung", "Ghi chú"])
+            w.writerow(["Mã cán bộ", "Họ và tên", "Hình thức", "Ngày quyết định", "Số quyết định",
+                        "Cấp bậc mới", "Hệ số lương mới", "Người ký", "Nội dung", "Ghi chú"])
             for r in rows:
                 w.writerow([r["ma_cb"], r["ho_ten"], r["loai"], r["ngay_quyet_dinh"] or "",
-                            r["so_quyet_dinh"] or "", r["cap_bac_moi"] or "", r["noi_dung"] or "", r["ghi_chu"] or ""])
+                            r["so_quyet_dinh"] or "", r["cap_bac_moi"] or "", r["he_so_luong_moi"] or "",
+                            r["nguoi_ky"] or "", r["noi_dung"] or "", r["ghi_chu"] or ""])
         self.db.log(self.app.user["username"], "Xuất CSV", f"{len(rows)} bản ghi ({TITLE})")
         messagebox.showinfo("Xuất CSV", f"Đã xuất file:\n{path}")
 
@@ -311,79 +283,95 @@ class AdvancedSearchDialog(tk.Toplevel):
 
 
 class EntryFormDialog(tk.Toplevel):
+    """Thêm / sửa MỘT quyết định nâng lương - thăng cấp bậc hàm."""
+
     def __init__(self, tab, row=None):
         super().__init__(tab.app)
         self.tab, self.db, self.row = tab, tab.db, row
         is_edit = row is not None
         self.pending_file = None
 
-        shell = DialogShell(self, "Sửa quyết định nâng lương / thăng cấp" if is_edit
-                            else "Thêm quyết định nâng lương / thăng cấp",
-                            width=520, height=600, min_height=520)
+        shell = DialogShell(self, "Sửa quyết định nâng lương - thăng cấp" if is_edit
+                            else "Thêm quyết định nâng lương - thăng cấp",
+                            width=540, height=680, min_height=520)
         form = shell.body
         form.columnconfigure(1, weight=1)
+        r = 0
 
-        ttk.Label(form, text="Cán bộ *", style="Card.TLabel").grid(row=0, column=0, sticky="w", pady=6, padx=(0, 10))
+        def label(text, sticky="w"):
+            ttk.Label(form, text=text, style="Card.TLabel").grid(row=r, column=0, sticky=sticky, pady=6, padx=(0, 10))
+
+        label("Cán bộ *")
         self.picker = EmployeePicker(form, self.db, width=27)
-        self.picker.grid(row=0, column=1, pady=6, sticky="ew")
-
-        ttk.Label(form, text="Loại *", style="Card.TLabel").grid(row=1, column=0, sticky="w", pady=6, padx=(0, 10))
-        self.v_loai = tk.StringVar(value=tab.loai_values[0])
-        c_loai = ttk.Combobox(form, textvariable=self.v_loai, values=LOAI_OPTIONS, state="readonly", width=25)
-        c_loai.grid(row=1, column=1, pady=6, sticky="ew")
-        c_loai.bind("<<ComboboxSelected>>", lambda e: self._on_loai_change())
-
-        ttk.Label(form, text="Ngày quyết định (dd/mm/yyyy)", style="Card.TLabel").grid(
-            row=2, column=0, sticky="w", pady=6, padx=(0, 10))
+        self.picker.grid(row=r, column=1, pady=6, sticky="ew")
+        r += 1
+        label("Hình thức *")
+        self.v_loai = tk.StringVar(value=HINH_THUC[0])
+        ttk.Combobox(form, textvariable=self.v_loai, values=HINH_THUC, state="readonly", width=25).grid(
+            row=r, column=1, pady=6, sticky="ew")
+        r += 1
+        label("Ngày quyết định")
         self.v_ngay = tk.StringVar()
-        DateEntry(form, textvariable=self.v_ngay, width=22).grid(row=2, column=1, pady=6, sticky="ew")
-
-        ttk.Label(form, text="Số quyết định", style="Card.TLabel").grid(row=3, column=0, sticky="w", pady=6, padx=(0, 10))
+        DateEntry(form, textvariable=self.v_ngay, width=22).grid(row=r, column=1, pady=6, sticky="ew")
+        r += 1
+        label("Số quyết định")
         self.v_soqd = tk.StringVar()
-        ttk.Entry(form, textvariable=self.v_soqd, width=27).grid(row=3, column=1, pady=6, sticky="ew")
-
-        self.v_cap_label = tk.StringVar()
-        ttk.Label(form, textvariable=self.v_cap_label, style="Card.TLabel").grid(
-            row=4, column=0, sticky="w", pady=6, padx=(0, 10))
+        ttk.Entry(form, textvariable=self.v_soqd, width=27).grid(row=r, column=1, pady=6, sticky="ew")
+        r += 1
+        label("Người ký")
+        self.v_nguoiky = tk.StringVar()
+        ttk.Entry(form, textvariable=self.v_nguoiky, width=27).grid(row=r, column=1, pady=6, sticky="ew")
+        r += 1
+        label("Cấp bậc mới")
         self.v_capmoi = tk.StringVar()
-        ttk.Combobox(form, textvariable=self.v_capmoi, values=[""] + cand_data.CAP_BAC,
-                    state="readonly", width=25).grid(row=4, column=1, pady=6, sticky="ew")
-
-        ttk.Label(form, text="Nội dung (không bắt buộc)", style="Card.TLabel").grid(
-            row=5, column=0, sticky="nw", pady=6, padx=(0, 10))
+        c_cap = ttk.Combobox(form, textvariable=self.v_capmoi, values=[""] + cand_data.CAP_BAC,
+                             state="readonly", width=25)
+        c_cap.grid(row=r, column=1, pady=6, sticky="ew")
+        c_cap.bind("<<ComboboxSelected>>", lambda e: self._on_rank_change())
+        r += 1
+        label("Hệ số lương mới")
+        self.v_heso = tk.StringVar()
+        FilterCombo(form, values=cand_data.HE_SO_LUONG_HOP_LE, width=25, textvariable=self.v_heso).grid(
+            row=r, column=1, pady=6, sticky="ew")
+        r += 1
+        ttk.Label(form, text="Nhập cấp bậc mới, hệ số lương mới hoặc cả hai (hệ số tự điền theo cấp bậc, "
+                             "có thể sửa lại).", style="CardMuted.TLabel", wraplength=420).grid(
+            row=r, column=0, columnspan=2, sticky="w", pady=(0, 4))
+        r += 1
+        label("Nội dung", sticky="nw")
         self.txt_noidung = tk.Text(form, width=22, height=3, font=("Segoe UI", 10), wrap="word",
                                    highlightthickness=1, highlightbackground=C["border"], relief="flat")
-        self.txt_noidung.grid(row=5, column=1, pady=6, sticky="ew")
-
-        ttk.Label(form, text="Ghi chú", style="Card.TLabel").grid(row=6, column=0, sticky="w", pady=6, padx=(0, 10))
+        self.txt_noidung.grid(row=r, column=1, pady=6, sticky="ew")
+        r += 1
+        label("Ghi chú")
         self.v_note = tk.StringVar()
-        ttk.Entry(form, textvariable=self.v_note, width=27).grid(row=6, column=1, pady=6, sticky="ew")
-
-        ttk.Label(form, text="File đính kèm", style="Card.TLabel").grid(row=7, column=0, sticky="w", pady=6, padx=(0, 10))
+        ttk.Entry(form, textvariable=self.v_note, width=27).grid(row=r, column=1, pady=6, sticky="ew")
+        r += 1
+        label("File đính kèm")
         file_row = ttk.Frame(form, style="Card.TFrame")
-        file_row.grid(row=7, column=1, pady=6, sticky="ew")
+        file_row.grid(row=r, column=1, pady=6, sticky="ew")
         self.v_filename = tk.StringVar(value="(chưa có file)")
         ttk.Label(file_row, textvariable=self.v_filename, style="CardMuted.TLabel", wraplength=180).pack(side="left")
         RoundedButton(file_row, text="📎  Chọn file...", command=self._pick_file, variant="secondary").pack(
             side="left", padx=(8, 0))
-
-        self.v_sync = tk.BooleanVar()
-        ttk.Checkbutton(form, text="Cập nhật cấp bậc hiện tại của cán bộ theo lựa chọn này",
+        r += 1
+        self.v_sync = tk.BooleanVar(value=not is_edit)
+        ttk.Checkbutton(form, text="Cập nhật cấp bậc và hệ số lương hiện tại của cán bộ theo quyết định này",
                         variable=self.v_sync, style="Card.TCheckbutton").grid(
-            row=8, column=0, columnspan=2, sticky="w", pady=(6, 0))
+            row=r, column=0, columnspan=2, sticky="w", pady=(6, 0))
 
         if is_edit:
             self.picker.set_by_id(row["can_bo_id"])
             self.v_loai.set(row["loai"])
             self.v_ngay.set(row["ngay_quyet_dinh"] or "")
             self.v_soqd.set(row["so_quyet_dinh"] or "")
+            self.v_nguoiky.set(row["nguoi_ky"] or "")
             self.v_capmoi.set(row["cap_bac_moi"] or "")
+            self.v_heso.set(row["he_so_luong_moi"] or "")
             self.txt_noidung.insert("1.0", row["noi_dung"] or "")
             self.v_note.set(row["ghi_chu"] or "")
             if row["file_dinh_kem"]:
                 self.v_filename.set(attachments.display_name(row["file_dinh_kem"]))
-
-        self._on_loai_change(set_sync=not is_edit)
 
         save_label = "💾  Lưu thay đổi" if is_edit else "➕  Thêm"
         RoundedButton(shell.footer, text=save_label, command=self.save, variant="primary").pack(
@@ -391,74 +379,73 @@ class EntryFormDialog(tk.Toplevel):
         RoundedButton(shell.footer, text="Hủy", command=self.destroy, variant="secondary").pack(
             side="left", fill="x", expand=True)
 
-        center(self, 520, 600)
+        center(self, 540, 680)
         try:
             self.wait_visibility()
             self.grab_set()
         except tk.TclError:
             pass
 
-    def _is_promotion(self):
-        return self.v_loai.get() in LOAI_THANG_CAP
-
-    def _on_loai_change(self, set_sync=True):
-        promo = self._is_promotion()
-        self.v_cap_label.set("Cấp bậc mới *" if promo else "Cấp bậc mới (nếu có)")
-        if set_sync:
-            self.v_sync.set(promo)
+    def _on_rank_change(self):
+        coef = cand_data.HE_SO_LUONG_THEO_CAP_BAC.get(self.v_capmoi.get())
+        if coef:
+            self.v_heso.set(coef)
 
     def _pick_file(self):
         path = filedialog.askopenfilename(
-            title="Chọn file đính kèm",
+            parent=self, title="Chọn file đính kèm",
             filetypes=[("Tài liệu", "*.pdf *.doc *.docx *.jpg *.jpeg *.png"), ("Tất cả file", "*.*")])
         if path:
             self.pending_file = path
             self.v_filename.set(os.path.basename(path) + "  (chưa lưu)")
-
-    def _validate_date(self):
-        d = self.v_ngay.get().strip()
-        if not d:
-            return True
-        try:
-            datetime.datetime.strptime(d, "%d/%m/%Y")
-            return True
-        except ValueError:
-            messagebox.showwarning("Sai định dạng", "Ngày quyết định phải theo dạng dd/mm/yyyy.", parent=self)
-            return False
 
     def save(self):
         emp_id = self.picker.get()
         if not emp_id:
             messagebox.showwarning("Thiếu thông tin", "Vui lòng chọn một cán bộ.", parent=self)
             return
-        if self._is_promotion() and not self.v_capmoi.get():
-            messagebox.showwarning("Thiếu thông tin", "Vui lòng chọn Cấp bậc mới.", parent=self)
+        cap, heso = self.v_capmoi.get().strip(), self.v_heso.get().strip().replace(",", ".")
+        if not cap and not heso:
+            messagebox.showwarning("Thiếu thông tin", "Vui lòng nhập Cấp bậc mới hoặc Hệ số lương mới.", parent=self)
             return
-        if not self._validate_date():
+        if heso:
+            try:
+                float(heso)
+            except ValueError:
+                messagebox.showwarning("Sai định dạng", "Hệ số lương phải là số, vd 4.60.", parent=self)
+                return
+        ngay = self.v_ngay.get().strip()
+        if ngay and not _to_key(ngay):
+            messagebox.showwarning("Sai định dạng", "Ngày quyết định phải theo dạng dd/mm/yyyy.", parent=self)
             return
-        data = dict(can_bo_id=emp_id, loai=self.v_loai.get(), ngay_quyet_dinh=self.v_ngay.get().strip(),
-                   so_quyet_dinh=self.v_soqd.get().strip(), cap_bac_moi=self.v_capmoi.get().strip() or None,
-                   noi_dung=self.txt_noidung.get("1.0", "end").strip(), ghi_chu=self.v_note.get().strip())
+        data = dict(can_bo_id=emp_id, loai=self.v_loai.get(), ngay_quyet_dinh=ngay,
+                    so_quyet_dinh=self.v_soqd.get().strip(), nguoi_ky=self.v_nguoiky.get().strip(),
+                    cap_bac_moi=cap or None, he_so_luong_moi=heso or None,
+                    noi_dung=self.txt_noidung.get("1.0", "end").strip(), ghi_chu=self.v_note.get().strip())
+        user = self.tab.app.user["username"]
         if self.pending_file:
             new_rel = attachments.save_attachment(self.tab.app.app_dir, TABLE, self.pending_file)
             if self.row is not None and self.row["file_dinh_kem"]:
                 attachments.delete_attachment(self.tab.app.app_dir, self.row["file_dinh_kem"])
             data["file_dinh_kem"] = new_rel
+        change = " / ".join(x for x in (cap, f"hệ số {heso}" if heso else "") if x)
         if self.row is None:
             data.setdefault("file_dinh_kem", None)
-            data["created_by"] = self.tab.app.user["username"]
+            data["created_by"] = user
             self.db.insert(TABLE, data)
-            self.db.log(self.tab.app.user["username"], "Thêm quyết định nâng lương/thăng cấp",
-                        f"{self.db.employee_label(emp_id)} - {data['loai']}")
+            self.db.log(user, "Thêm quyết định nâng lương - thăng cấp", f"{self.db.employee_label(emp_id)}: {change}")
             self.tab.app.status.set("Đã lưu.")
         else:
             self.db.update(TABLE, self.row["id"], data)
-            self.db.log(self.tab.app.user["username"], "Sửa quyết định nâng lương/thăng cấp",
-                        f"{self.db.employee_label(emp_id)} - {data['loai']}")
+            self.db.log(user, "Sửa quyết định nâng lương - thăng cấp", f"{self.db.employee_label(emp_id)}: {change}")
             self.tab.app.status.set("Đã cập nhật.")
-        if self.v_sync.get() and data["cap_bac_moi"]:
-            self.db.update("can_bo", emp_id, {"cap_bac": data["cap_bac_moi"]})
-            self.db.log(self.tab.app.user["username"], "Đồng bộ cấp bậc cán bộ",
-                        f"{self.db.employee_label(emp_id)} -> {data['cap_bac_moi']}")
+        if self.v_sync.get():
+            upd = {}
+            if cap:
+                upd["cap_bac"] = cap
+            if heso:
+                upd["he_so_luong"] = heso
+            self.db.update("can_bo", emp_id, upd)
+            self.db.log(user, "Đồng bộ cấp bậc / hệ số lương cán bộ", f"{self.db.employee_label(emp_id)} -> {change}")
         self.tab.refresh()
         self.destroy()
