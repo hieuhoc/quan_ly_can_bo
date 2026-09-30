@@ -873,6 +873,76 @@ class RoundedButton(tk.Canvas):
             self._draw()
 
 
+class TabBar(tk.Frame):
+    """Thanh tab kiểu hiện đại: chữ phẳng, tab đang chọn có gạch chân màu
+    thương hiệu, kèm ô đếm số bản ghi của từng nhóm (vd "Nâng lương  3").
+    Dùng để chia một bảng thành các nhóm, hoặc chuyển giữa các khung nội
+    dung (thay cho ttk.Notebook có viền hộp kiểu cũ).
+
+        bar = TabBar(parent, [("all", "Tất cả"), ("a", "Nhóm A")], command=on_change)
+        bar.set_count("a", 12)
+    """
+
+    def __init__(self, parent, tabs, command=None, selected=None, bg=None):
+        bg = bg or C["card"]
+        super().__init__(parent, bg=bg)
+        self._bg = bg
+        self.command = command
+        self.selected = selected or tabs[0][0]
+        self._tabs = {}
+        row = tk.Frame(self, bg=bg)
+        row.pack(fill="x")
+        for key, label in tabs:
+            cell = tk.Frame(row, bg=bg, cursor="hand2")
+            cell.pack(side="left", padx=(0, 22))
+            inner = tk.Frame(cell, bg=bg)
+            inner.pack(pady=(4, 8))
+            lbl = tk.Label(inner, text=label, bg=bg, font=(FONT, 10), cursor="hand2")
+            lbl.pack(side="left")
+            badge = tk.Label(inner, text="", bg=bg, font=(FONT, 8, "bold"), padx=7, pady=1, cursor="hand2")
+            line = tk.Frame(cell, height=3, bg=bg)
+            line.pack(fill="x", side="bottom")
+            self._tabs[key] = dict(cell=cell, inner=inner, label=lbl, badge=badge, line=line, count=None)
+            for w in (cell, inner, lbl, badge):
+                w.bind("<Button-1>", lambda e, k=key: self.select(k, notify=True))
+                w.bind("<Enter>", lambda e, k=key: self._hover(k, True))
+                w.bind("<Leave>", lambda e, k=key: self._hover(k, False))
+        tk.Frame(self, height=1, bg=C["border"]).pack(fill="x")
+        self._paint()
+
+    def _paint(self):
+        for key, t in self._tabs.items():
+            on = key == self.selected
+            t["label"].configure(fg=C["primary"] if on else C["muted"],
+                                 font=(FONT, 10, "bold") if on else (FONT, 10))
+            t["line"].configure(bg=C["primary"] if on else self._bg)
+            if t["count"] is None:
+                t["badge"].pack_forget()
+            else:
+                t["badge"].configure(text=str(t["count"]),
+                                     bg=C["primary"] if on else C["neutral_light"],
+                                     fg="white" if on else C["muted"])
+                t["badge"].pack(side="left", padx=(8, 0))
+
+    def _hover(self, key, entering):
+        if key == self.selected:
+            return
+        self._tabs[key]["label"].configure(fg=C["text"] if entering else C["muted"])
+        self._tabs[key]["line"].configure(bg=C["neutral_border"] if entering else self._bg)
+
+    def select(self, key, notify=False):
+        changed = key != self.selected
+        self.selected = key
+        self._paint()
+        if notify and changed and self.command:
+            self.command(key)
+
+    def set_count(self, key, n):
+        """n=None để ẩn ô đếm."""
+        self._tabs[key]["count"] = n
+        self._paint()
+
+
 class DialogShell:
     """Khung chuẩn cho hộp thoại popup Thêm/Sửa: kéo thả đổi kích thước
     được, phần thân cuộn riêng, thanh nút cố định phía dưới. Dùng:

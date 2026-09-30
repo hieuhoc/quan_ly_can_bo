@@ -6,7 +6,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
 from core.theme import C, center, make_card
-from core.widgets import DialogShell, EmployeePicker, RoundedButton, make_tree
+from core.widgets import DialogShell, EmployeePicker, RoundedButton, TabBar, make_tree
 
 MODULE_ID = "classification"
 TABLE = "phan_loai_can_bo"
@@ -72,21 +72,24 @@ class Panel(ttk.Frame):
         self.refresh()
 
     def _build(self):
-        self.nb = ttk.Notebook(self)
-        self.nb.pack(fill="both", expand=True)
-        tab_list = ttk.Frame(self.nb, padding=(0, 10, 0, 0))
-        tab_grid = ttk.Frame(self.nb, padding=(0, 10, 0, 0))
-        self.nb.add(tab_list, text="  📋  Danh sách chi tiết  ")
-        self.nb.add(tab_grid, text="  📊  Bảng tổng hợp theo kỳ  ")
-        self._build_list_tab(tab_list)
-        self._build_grid_tab(tab_grid)
+        self.tabs = TabBar(self, [("list", "Danh sách chi tiết"), ("grid", "Bảng tổng hợp theo kỳ")],
+                           command=self._on_tab_changed, bg=C["bg"])
+        self.tabs.pack(fill="x", pady=(0, 14))
+        body = ttk.Frame(self)
+        body.pack(fill="both", expand=True)
+        self.tab_frames = {"list": ttk.Frame(body), "grid": ttk.Frame(body)}
+        self._build_list_tab(self.tab_frames["list"])
+        self._build_grid_tab(self.tab_frames["grid"])
+        self.tab_frames["list"].pack(fill="both", expand=True)
+
+    def _on_tab_changed(self, key):
         # Hai tab cùng đọc từ một bảng dữ liệu nên luôn khớp nhau, nhưng để
         # chắc chắn người dùng không bao giờ thấy số liệu cũ, tự làm mới
-        # bảng tổng hợp mỗi khi chuyển sang đúng tab đó.
-        self.nb.bind("<<NotebookTabChanged>>", self._on_tab_changed)
-
-    def _on_tab_changed(self, _e=None):
-        if self.nb.index(self.nb.select()) == 1:
+        # nội dung mỗi khi chuyển tab.
+        for k, frame in self.tab_frames.items():
+            frame.pack_forget()
+        self.tab_frames[key].pack(fill="both", expand=True)
+        if key == "grid":
             self.refresh_grid()
         else:
             self.refresh()
@@ -321,6 +324,7 @@ class Panel(ttk.Frame):
             vals = [r[c[0]] if r[c[0]] not in (None, "") else "" for c in COLS]
             self.tree.insert("", "end", iid=str(r["id"]), values=vals, tags=("odd" if i % 2 else "even",))
         self.count_var.set(f"Tổng số: {len(rows)} bản ghi")
+        self.tabs.set_count("list", len(rows))
 
     def on_select(self, _=None):
         sel = self.tree.selection()

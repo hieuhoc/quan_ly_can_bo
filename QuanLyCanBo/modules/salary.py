@@ -14,7 +14,7 @@ from tkinter import filedialog, messagebox, ttk
 
 from core import attachments, cand_data
 from core.theme import C, center, make_card
-from core.widgets import DateEntry, DialogShell, EmployeePicker, RoundedButton, make_tree
+from core.widgets import DateEntry, DialogShell, EmployeePicker, RoundedButton, TabBar, make_tree
 
 MODULE_ID = "salary"
 TABLE = "qua_trinh_luong"
@@ -58,7 +58,6 @@ class Panel(ttk.Frame):
         self.adv_filters = {}
         self.adv_note = tk.StringVar()
         self.quick = "all"
-        self.quick_buttons = {}
         self._build()
         self._refresh_button_states()
         self.refresh()
@@ -74,17 +73,13 @@ class Panel(ttk.Frame):
         top.pack(fill="x")
         ttk.Label(top, text="Nâng lương - Thăng cấp bậc hàm", style="CardTitle.TLabel").pack(side="left")
         ttk.Label(top, textvariable=self.count_var, style="CardMuted.TLabel").pack(side="right")
-        tk.Frame(card, height=1, bg=C["border"]).pack(fill="x", pady=(10, 12))
+
+        self.tabs = TabBar(card, [(k, label) for k, label, _v in QUICK_FILTERS],
+                           command=self.set_quick, selected=self.quick)
+        self.tabs.pack(fill="x", pady=(12, 14))
 
         bar = ttk.Frame(card, style="Card.TFrame")
         bar.pack(fill="x", pady=(0, 4))
-        seg = ttk.Frame(bar, style="Card.TFrame")
-        seg.pack(side="left", padx=(0, 12))
-        for key, label, _v in QUICK_FILTERS:
-            b = RoundedButton(seg, text=label, command=lambda k=key: self.set_quick(k),
-                              variant="primary" if key == self.quick else "secondary")
-            b.pack(side="left", padx=(0, 4))
-            self.quick_buttons[key] = b
         ttk.Label(bar, text="🔍", style="Card.TLabel").pack(side="left")
         ttk.Entry(bar, textvariable=self.search_var).pack(side="left", fill="x", expand=True, padx=8)
         RoundedButton(bar, text="Xóa lọc", command=lambda: self.search_var.set(""), variant="secondary").pack(side="left")
@@ -116,8 +111,7 @@ class Panel(ttk.Frame):
 
     def set_quick(self, key):
         self.quick = key
-        for k, b in self.quick_buttons.items():
-            b.set_variant("primary" if k == key else "secondary")
+        self.tabs.select(key)
         self.selected_id = None
         self.refresh()
         self._refresh_button_states()
@@ -165,10 +159,15 @@ class Panel(ttk.Frame):
         self.refresh()
 
     def _rows(self):
-        placeholders = ",".join("?" * len(self.loai_values))
+        """Các bản ghi của nhóm (tab) đang chọn, đã áp bộ lọc tìm kiếm."""
+        return [r for r in self._rows_all() if r["loai"] in self.loai_values]
+
+    def _rows_all(self):
+        """Mọi loại quyết định, đã áp bộ lọc tìm kiếm - dùng để đếm từng tab."""
+        placeholders = ",".join("?" * len(LOAI_OPTIONS))
         sql = (f"SELECT q.*, c.ho_ten AS ho_ten, c.ma_cb AS ma_cb FROM qua_trinh_luong q "
                f"JOIN can_bo c ON c.id = q.can_bo_id WHERE q.loai IN ({placeholders})")
-        params = list(self.loai_values)
+        params = list(LOAI_OPTIONS)
         if self.adv_filters:
             f = self.adv_filters
             if f.get("ho_ten"):
@@ -188,15 +187,16 @@ class Panel(ttk.Frame):
         return self.db.conn.execute(sql, params).fetchall()
 
     def refresh(self):
-        rows = self._rows()
+        all_rows = self._rows_all()
+        for key, _label, loai in QUICK_FILTERS:
+            self.tabs.set_count(key, sum(1 for r in all_rows if r["loai"] in loai))
+        rows = [r for r in all_rows if r["loai"] in self.loai_values]
         self.tree.delete(*self.tree.get_children())
         for i, r in enumerate(rows):
             vals = [r[c[0]] or "" for c in COLS[:-1]] + ["📎 Có" if r["file_dinh_kem"] else "—"]
             tags = ["odd" if i % 2 else "even"] + (["promo"] if r["loai"] in LOAI_THANG_CAP else [])
             self.tree.insert("", "end", iid=str(r["id"]), values=vals, tags=tags)
-        n_luong = sum(1 for r in rows if r["loai"] in LOAI_NANG_LUONG)
-        self.count_var.set(f"Tổng số: {len(rows)} quyết định  •  Nâng lương: {n_luong}  •  "
-                           f"Thăng cấp: {len(rows) - n_luong}")
+        self.count_var.set(f"Đang hiển thị {len(rows)} quyết định")
 
     def on_select(self, _=None):
         sel = self.tree.selection()

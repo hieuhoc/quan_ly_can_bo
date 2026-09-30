@@ -79,7 +79,7 @@ class Shell(ttk.Frame):
         tk.Frame(self, height=1, bg=C["border"]).pack(fill="x")
 
     # ---- thanh bên: luôn mở rộng, nhóm theo Tổng quan / Nghiệp vụ / Quản trị
-    SIDEBAR_W = 256
+    SIDEBAR_W = 272
 
     def _build_sidebar(self, parent):
         side = tk.Frame(parent, bg=C["sidebar"], width=self.SIDEBAR_W)
