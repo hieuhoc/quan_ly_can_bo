@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+canbo.db
+backup/
+attachments/
+.saved_login
+allowed_machines.txt

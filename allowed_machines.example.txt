@@ -1,0 +1,17 @@
+# Danh sach ma may duoc phep cai dat / su dung phan mem Quan Ly Can Bo.
+#
+# CACH DUNG:
+#   1. Tren tung may muon duyet, bam dup XEM_MA_MAY.bat de lay ma may
+#      (dang XXXX-XXXX-XXXX), khong can cai Python truoc.
+#   2. Ghi moi ma mot dong vao duoi day (co the ghi chu ten may sau dau #).
+#   3. Doi ten file nay thanh "allowed_machines.txt" (bo phan ".example"),
+#      dat CUNG THU MUC voi CAI_DAT.bat.
+#   4. Chay CAI_DAT.bat tren tung may - may khong co trong danh sach se
+#      bi tu choi, khong cai dat gi ca.
+#
+# LUU Y: neu KHONG doi ten file nay thanh allowed_machines.txt, tinh nang
+# kiem tra may dang o che do TAT va phan mem chay binh thuong tren moi may.
+#
+# Vi du (xoa dau # o dau dong de kich hoat):
+# A1B2-C3D4-E5F6   # May phong Tham muu
+# 1234-5678-9ABC   # May phong Ho so
