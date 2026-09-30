@@ -207,9 +207,31 @@ class Shell(QWidget):
         self.app.status_right.setText(txt)
 
     # ---- mở module
+    def _sync_user(self, mod_id):
+        """Đọc lại tài khoản từ CSDL mỗi lần chuyển màn hình: bị vô hiệu hóa thì
+        đăng xuất ngay; quyền thay đổi thì vẽ lại khung với quyền mới (không phải
+        chờ người dùng đăng xuất rồi đăng nhập lại). Trả về False nếu đã xử lý."""
+        cur = self.app.user
+        fresh = self.db.get_user(cur["id"])
+        if not fresh or not fresh["active"]:
+            self.app.logout("Đăng xuất do tài khoản bị vô hiệu hóa / xóa")
+            return False
+        if (fresh["role"], fresh["perms"]) != (cur["role"], cur["perms"]):
+            self.app.reload_shell(open_module=mod_id if self._allowed(mod_id, fresh) else "dashboard")
+            return False
+        return True
+
+    def _allowed(self, mod_id, user):
+        if user["role"] == "admin" or any(m[0] == mod_id for m in registry.HOME_MODULES):
+            return True
+        from core.db import parse_perms
+        return "view" in parse_perms(user["perms"]).get(mod_id, set())
+
     def open_module(self, mod_id):
         info_ = registry.module_by_id(mod_id)
         if not info_:
+            return
+        if self.current_id is not None and not self._sync_user(mod_id):
             return
         for mid, b in self.nav_buttons.items():
             b.setChecked(mid == mod_id)

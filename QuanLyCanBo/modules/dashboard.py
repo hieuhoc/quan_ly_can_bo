@@ -6,13 +6,20 @@ quyền xem của người dùng với module dữ liệu tương ứng, và t�
 đó đang bị quản trị viên tắt."""
 import datetime
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QGridLayout, QHBoxLayout, QScrollArea, QVBoxLayout, QWidget
 
+from core import tham_so as ts
 from ui.theme import C
 from ui.widgets import BarChart, DataTable, StatCard, card, label, rule
 from ui.widgets import sql_date_key
 
 MODULE_ID = "dashboard"
+
+
+def _ph(values):
+    """Chuỗi tham số '?,?,?' cho mệnh đề IN (rỗng thì dùng '' để câu SQL vẫn hợp lệ)."""
+    return ",".join("?" * len(values)) or "''"
 
 
 class Panel(QScrollArea):
@@ -43,11 +50,22 @@ class Panel(QScrollArea):
             cards.addWidget(StatCard(q("SELECT COUNT(*) FROM can_bo"), "Tổng số cán bộ"))
             cards.addWidget(StatCard(q("SELECT COUNT(DISTINCT don_vi) FROM can_bo WHERE don_vi IS NOT NULL "
                                        "AND don_vi<>''"), "Phòng / Công an xã, phường", C["blue"]))
+            from core import canh_bao
+            alerts, _m, _e = canh_bao.compute(self.db)
+            n_qh = sum(1 for r in alerts if r["trang_thai"] == canh_bao.QUA_HAN)
+            warn_card = StatCard(len(alerts), f"Cảnh báo đến hạn (quá hạn: {n_qh})",
+                                 C["red"] if n_qh else C["amber"])
+            warn_card.setCursor(Qt.PointingHandCursor)
+            warn_card.setToolTip("Bấm để xem danh sách cảnh báo đến hạn")
+            warn_card.mousePressEvent = lambda _e: self.app.shell.open_module("reminders")
+            cards.addWidget(warn_card)
+        xong, ton = ts.get("trang_thai_da_xong"), ts.get("trang_thai_ton_dong")
+        not_done = f"trang_thai NOT IN ({_ph(xong + ton)})"
         if self.visible("complaints"):
-            cards.addWidget(StatCard(q("SELECT COUNT(*) FROM don_thu WHERE trang_thai IN "
-                                       "('Mới tiếp nhận','Đang xác minh','Đang xử lý')"), "Đơn thư đang xử lý",
-                                     C["gold"]))
-            cards.addWidget(StatCard(q("SELECT COUNT(*) FROM don_thu WHERE trang_thai='Tồn đọng'"),
+            cards.addWidget(StatCard(q(f"SELECT COUNT(*) FROM don_thu WHERE {not_done}", *(xong + ton)),
+                                     "Đơn thư đang xử lý", C["gold"]))
+            cards.addWidget(StatCard(q(f"SELECT COUNT(*) FROM don_thu WHERE trang_thai IN "
+                                       f"({_ph(ton)})", *ton),
                                      "Đơn thư tồn đọng", C["red"]))
         if self.visible("salary"):
             year = datetime.date.today().year
@@ -99,9 +117,9 @@ class Panel(QScrollArea):
             rows = self.db.conn.execute(
                 "SELECT d.id, d.tieu_de, d.trang_thai, d.ngay_nhan, c.ho_ten FROM don_thu d "
                 "LEFT JOIN can_bo c ON c.id=d.can_bo_id "
-                "WHERE d.trang_thai IN ('Tồn đọng','Đang xử lý','Đang xác minh','Mới tiếp nhận') "
-                f"ORDER BY (d.ngay_nhan IS NULL OR d.ngay_nhan=''), {sql_date_key('d.ngay_nhan')} ASC LIMIT 6"
-            ).fetchall()
+                f"WHERE d.trang_thai NOT IN ({_ph(xong)}) "
+                f"ORDER BY (d.ngay_nhan IS NULL OR d.ngay_nhan=''), {sql_date_key('d.ngay_nhan')} ASC LIMIT 6",
+                xong).fetchall()
             f, lay = card(16)
             lay.addWidget(label("Đơn thư chưa giải quyết, nhận lâu nhất", "CardTitle"))
             lay.addWidget(rule())

@@ -207,6 +207,17 @@ class Database:
                 self.conn.execute(f"ALTER TABLE can_bo ADD COLUMN {col} TEXT")
         if "ly_do_ngoai_le" not in self._cols("qua_trinh_luong"):
             self.conn.execute("ALTER TABLE qua_trinh_luong ADD COLUMN ly_do_ngoai_le TEXT")
+        # v4.2: ngoại lệ cảnh báo đến hạn (dời hạn / không nhắc) - bắt buộc có lý do
+        self.conn.execute(
+            """CREATE TABLE IF NOT EXISTS ngoai_le_canh_bao (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                can_bo_id INTEGER NOT NULL REFERENCES can_bo(id) ON DELETE CASCADE,
+                loai TEXT NOT NULL,          -- thang_cap / nang_luong / nghi_huu / dang
+                han_moi TEXT,                -- dd/mm/yyyy; trống = không nhắc loại này
+                ly_do TEXT NOT NULL,
+                nguoi_tao TEXT, thoi_gian TEXT,
+                UNIQUE (can_bo_id, loai)
+            )""")
         # v3.9: nâng lương và thăng cấp là MỘT quyết định - thêm hệ số lương
         # mới và người ký bên cạnh cấp bậc mới.
         have_ql = self._cols("qua_trinh_luong")
@@ -421,9 +432,10 @@ class Database:
         return self.conn.execute("SELECT * FROM nhat_ky ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
 
     # ---------------------------------------------------- sao lưu
-    def backup(self, backup_dir, keep=20):
+    def backup(self, backup_dir, keep=20, prefix="canbo_"):
+        """Sao lưu vào backup_dir; chỉ tự xóa bớt các bản tự động (tên bắt đầu 'canbo_')."""
         os.makedirs(backup_dir, exist_ok=True)
-        name = datetime.datetime.now().strftime("canbo_%Y%m%d_%H%M%S.db")
+        name = prefix + datetime.datetime.now().strftime("%Y%m%d_%H%M%S.db")
         dst_path = os.path.join(backup_dir, name)
         dst = sqlite3.connect(dst_path)
         with dst:
@@ -436,6 +448,38 @@ class Database:
             except OSError:
                 pass
         return dst_path
+
+    @staticmethod
+    def check_backup_file(path):
+        """Kiểm tra file có phải CSDL của phần mềm này không. Trả về (hợp lệ, mô tả)."""
+        try:
+            src = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+            try:
+                tables = {r[0] for r in src.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+                if not {"can_bo", "nguoi_dung"} <= tables:
+                    return False, "File không phải CSDL của phần mềm Quản lý cán bộ."
+                n = src.execute("SELECT COUNT(*) FROM can_bo").fetchone()[0]
+                ok = src.execute("PRAGMA quick_check").fetchone()[0]
+                if ok != "ok":
+                    return False, f"File CSDL bị lỗi: {ok}"
+                return True, f"{n} cán bộ"
+            finally:
+                src.close()
+        except sqlite3.Error as e:
+            return False, f"Không đọc được file: {e}"
+
+    def restore_from(self, path):
+        """Chép toàn bộ dữ liệu từ file sao lưu vào CSDL đang dùng (ghi đè), rồi
+        bổ sung các cột/bảng mới nếu bản sao lưu được tạo từ phiên bản cũ."""
+        src = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+        try:
+            src.backup(self.conn)
+        finally:
+            src.close()
+        self.conn.execute("PRAGMA foreign_keys = ON")
+        self._create_schema()
+        self._migrate()
+        self._ensure_admin()
 
     def close(self):
         self.conn.close()

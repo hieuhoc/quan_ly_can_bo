@@ -16,7 +16,7 @@ from ui.theme import draw_shield
 from ui.widgets import FormDialog, button, info, label
 
 APP_TITLE = "QUẢN LÝ CÁN BỘ"
-VERSION = "4.1"
+VERSION = "4.2"
 BACKUP_INTERVAL_MIN = 30
 IDLE_TIMEOUT_MIN = 15
 ROLES = {"admin": "Quản trị viên", "user": "Người dùng"}
@@ -49,6 +49,8 @@ class App(QMainWindow):
     def __init__(self, db, app_dir):
         super().__init__()
         self.db = db
+        from core import tham_so
+        tham_so.bind(db)
         self.app_dir = app_dir
         self.backup_dir = os.path.join(app_dir, "backup")
         self.user = None

@@ -3,14 +3,13 @@
 from PySide6.QtWidgets import QLineEdit
 
 from core import attachments
+from core import tham_so as ts
 from ui.theme import C
 from ui.widgets import (DateField, EmployeePicker, FilePicker, FormDialog, ListPage, SearchDialog, ask, choice,
                         date_key, sql_date_key, text_edit, valid_date, warn)
 
 MODULE_ID = "complaints"
 TABLE = "don_thu"
-LOAI_OPTIONS = ["Đơn thư", "Khiếu nại", "Tố cáo", "Phản ánh"]
-TRANG_THAI_OPTIONS = ["Mới tiếp nhận", "Đang xác minh", "Đang xử lý", "Đã giải quyết", "Tồn đọng"]
 COLS = [("tieu_de", "Tiêu đề", 200), ("loai", "Loại", 90), ("ho_ten", "Cán bộ liên quan", 150),
         ("nguoi_gui", "Người gửi", 120), ("ngay_nhan", "Ngày nhận", 100), ("trang_thai", "Trạng thái", 120),
         ("ngay_giai_quyet", "Ngày giải quyết", 110), ("file_dinh_kem", "File", 70)]
@@ -35,8 +34,8 @@ class Panel(ListPage):
             "Danh sách đơn thư - khiếu nại", "don_thu_khieu_nai",
             columns=[c for c in EXPORT_COLS if c[0] not in ("noi_dung", "ket_qua")]), perm="export", right=True)
         self.table.set_display("file_dinh_kem", lambda v, r: "📎 Có" if v else "—")
-        self.table.set_row_color(lambda r: C["green"] if r["trang_thai"] == "Đã giải quyết"
-                                 else (C["red"] if r["trang_thai"] == "Tồn đọng" else None))
+        self.table.set_row_color(lambda r: C["green"] if r["trang_thai"] in ts.get("trang_thai_da_xong")
+                                 else (C["red"] if r["trang_thai"] in ts.get("trang_thai_ton_dong") else None))
         self.table.activated_row.connect(self.open_edit)
         self.table.delete_pressed.connect(self.on_delete)
         self.refresh()
@@ -74,8 +73,8 @@ class Panel(ListPage):
 
     def open_advanced(self):
         SearchDialog(self, [("tieu_de", "Tiêu đề", QLineEdit()),
-                            ("loai", "Loại", choice([""] + LOAI_OPTIONS)),
-                            ("trang_thai", "Trạng thái", choice([""] + TRANG_THAI_OPTIONS)),
+                            ("loai", "Loại", choice([""] + ts.get("loai_don_thu"))),
+                            ("trang_thai", "Trạng thái", choice([""] + ts.get("trang_thai_don_thu"))),
                             ("nguoi_gui", "Người gửi", QLineEdit()),
                             ("tu_ngay", "Nhận từ ngày (dd/mm/yyyy)", QLineEdit())],
                      validate=lambda v: "Từ ngày phải theo dạng dd/mm/yyyy." if v.get("tu_ngay") and not
@@ -118,14 +117,14 @@ class EntryDialog(FormDialog):
         r = dict(row) if row else {}
         f = self.form()
         self.e_title = QLineEdit(r.get("tieu_de") or "")
-        self.c_loai = choice(LOAI_OPTIONS, r.get("loai"))
+        self.c_loai = choice(ts.get("loai_don_thu"), r.get("loai"))
         self.picker = EmployeePicker(self.db)
         if r.get("can_bo_id"):
             self.picker.set_by_id(r["can_bo_id"])
         self.e_gui = QLineEdit(r.get("nguoi_gui") or "")
         self.d_nhan = DateField(r.get("ngay_nhan") or "")
         self.t_noidung = text_edit(r.get("noi_dung"), 90)
-        self.c_status = choice(TRANG_THAI_OPTIONS, r.get("trang_thai"))
+        self.c_status = choice(ts.get("trang_thai_don_thu"), r.get("trang_thai"))
         self.d_gq = DateField(r.get("ngay_giai_quyet") or "")
         self.t_ketqua = text_edit(r.get("ket_qua"), 70)
         self.e_note = QLineEdit(r.get("ghi_chu") or "")

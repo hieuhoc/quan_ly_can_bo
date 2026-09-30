@@ -14,7 +14,8 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (QButtonGroup, QGridLayout, QHBoxLayout, QLineEdit, QRadioButton, QStackedWidget,
                                QVBoxLayout, QWidget)
 
-from core import attachments, cand_data, co_cau
+from core import attachments, co_cau
+from core import tham_so as ts
 from ui.widgets import (DataTable, DateField, FilePicker, FormDialog, ListPage, ProvinceWardPicker, SearchDialog,
                         SuggestCombo, ask, button, choice, info, label, open_file_dialog, section,
                         text_edit, valid_date, warn)
@@ -119,7 +120,7 @@ def validate(data):
 
 def he_so_ngoai_quy_dinh(cap_bac, he_so):
     """Mô tả điểm khác bảng hệ số lương theo cấp bậc, hoặc None nếu khớp / không áp dụng."""
-    chuan = cand_data.HE_SO_LUONG_THEO_CAP_BAC.get(cap_bac or "")
+    chuan = ts.he_so_chuan(cap_bac or "")
     if not chuan or not he_so:
         return None
     try:
@@ -372,7 +373,7 @@ class Panel(ListPage):
             ("ma_cb", "Mã cán bộ", QLineEdit()), ("ho_ten", "Họ và tên", QLineEdit()),
             ("cong_an_tinh", "Công an tỉnh / thành phố", choice([""] + co_cau.danh_sach_cong_an_tinh())),
             ("don_vi", "Phòng / Công an xã, phường", QLineEdit()), ("doi_to", "Đội / Tổ", QLineEdit()),
-            ("cap_bac", "Cấp bậc", choice([""] + cand_data.CAP_BAC)), ("chuc_vu", "Chức vụ", QLineEdit()),
+            ("cap_bac", "Cấp bậc", choice([""] + ts.cap_bac())), ("chuc_vu", "Chức vụ", QLineEdit()),
             ("gioi_tinh", "Giới tính", choice(["", "Nam", "Nữ"])),
             ("que_quan_tinh", "Quê quán - Tỉnh/Thành", choice([""] + dgh.danh_sach_tinh()))]).exec()
 
@@ -597,13 +598,13 @@ class EmployeeDialog(FormDialog):
         if kind == "gender":
             return choice(["", "Nam", "Nữ"], val)
         if kind == "rank":
-            w = choice([""] + cand_data.CAP_BAC, val)
+            w = choice([""] + ts.cap_bac(), val)
             w.currentTextChanged.connect(self._on_rank)
             return w
         if kind == "position":
-            return SuggestCombo(cand_data.CHUC_VU_PHO_BIEN, text=val)
+            return SuggestCombo(ts.get("chuc_vu_goi_y"), text=val)
         if kind == "salary":
-            return SuggestCombo(cand_data.HE_SO_LUONG_HOP_LE, text=val)
+            return SuggestCombo(ts.he_so_goi_y(), text=val)
         if kind == "ca_tinh":
             if val:
                 self.unit.tinh.setText(val)
@@ -620,7 +621,7 @@ class EmployeeDialog(FormDialog):
         return e
 
     def _on_rank(self, text):
-        coef = cand_data.HE_SO_LUONG_THEO_CAP_BAC.get(text)
+        coef = ts.he_so_chuan(text)
         if coef and "he_so_luong" in self.fields:
             self.fields["he_so_luong"][0].setText(coef)
 
@@ -823,6 +824,12 @@ class DeleteEmployeeDialog(FormDialog):
         rec.update(thoi_gian=datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                    nguoi_thuc_hien=app.user["username"], du_lieu=json.dumps(snapshot, ensure_ascii=False))
         self.db.insert(DELETED_TABLE, rec)
+        # File đính kèm của các quyết định nâng lương - thăng cấp bị xóa theo cán bộ
+        # (xóa dây chuyền trong CSDL) - dọn luôn file để không bỏ lại file rác.
+        # Ảnh thẻ được giữ lại cùng bản lưu hồ sơ đã xóa.
+        for f in self.db.conn.execute("SELECT file_dinh_kem FROM qua_trinh_luong WHERE can_bo_id=? "
+                                      "AND file_dinh_kem IS NOT NULL AND file_dinh_kem<>''", (self.row["id"],)):
+            attachments.delete_attachment(app.app_dir, f["file_dinh_kem"])
         self.db.delete(TABLE, self.row["id"])
         self.db.log(app.user["username"], "Xóa cán bộ", f"{self.row['ma_cb']} - {self.row['ho_ten']} ({detail})")
         app.set_status("Đã xóa cán bộ khỏi danh sách.")

@@ -8,14 +8,13 @@ nhất lên đầu. Dữ liệu từ bản cũ (loại "Nâng lương định k�
 "Thăng cấp bậc hàm") vẫn hiển thị nguyên như trước trong cột Hình thức."""
 from PySide6.QtWidgets import QCheckBox, QLineEdit
 
-from core import attachments, cand_data
+from core import attachments
+from core import tham_so as ts
 from ui.widgets import (DateField, EmployeePicker, FilePicker, FormDialog, ListPage, SearchDialog, SuggestCombo,
                         ask, choice, date_key, label, sql_date_key, text_edit, valid_date, warn)
 
 MODULE_ID = "salary"
 TABLE = "qua_trinh_luong"
-HINH_THUC = ["Định kỳ", "Trước hạn", "Khác"]
-HINH_THUC_KHAC = "Khác"
 COLS = [("ma_cb", "Mã CB", 80), ("ho_ten", "Cán bộ", 160), ("loai", "Hình thức", 100),
         ("ngay_quyet_dinh", "Ngày QĐ", 100), ("so_quyet_dinh", "Số quyết định", 130),
         ("cap_bac_moi", "Cấp bậc mới", 110), ("he_so_luong_moi", "Hệ số lương mới", 120),
@@ -25,12 +24,12 @@ COLS = [("ma_cb", "Mã CB", 80), ("ho_ten", "Cán bộ", 160), ("loai", "Hình t
 
 def ngoai_quy_dinh(hinh_thuc, cap_bac, he_so):
     """Trả về mô tả điểm khác quy định (cần ghi lý do), hoặc None nếu đúng quy định:
-    - hình thức "Khác";
-    - hệ số lương không khớp bảng hệ số theo cấp bậc (Nghị định 204/2004/NĐ-CP)."""
+    - hình thức thuộc danh sách "Hình thức bắt buộc ghi lý do" (tham số);
+    - hệ số lương không khớp bảng hệ số theo cấp bậc (tham số)."""
     reasons = []
-    if hinh_thuc == HINH_THUC_KHAC:
-        reasons.append("hình thức Khác")
-    chuan = cand_data.HE_SO_LUONG_THEO_CAP_BAC.get(cap_bac or "")
+    if hinh_thuc in ts.get("hinh_thuc_can_ly_do"):
+        reasons.append(f"hình thức {hinh_thuc}")
+    chuan = ts.he_so_chuan(cap_bac or "")
     if chuan and he_so:
         try:
             if abs(float(he_so) - float(chuan)) > 1e-9:
@@ -98,7 +97,7 @@ class Panel(ListPage):
         SearchDialog(self, [("ho_ten", "Họ và tên cán bộ", QLineEdit()),
                             ("tu_ngay", "Quyết định từ ngày (dd/mm/yyyy)", QLineEdit()),
                             ("so_quyet_dinh", "Số quyết định", QLineEdit()),
-                            ("cap_bac_moi", "Cấp bậc mới", choice([""] + cand_data.CAP_BAC))],
+                            ("cap_bac_moi", "Cấp bậc mới", choice([""] + ts.cap_bac()))],
                      validate=lambda v: "Từ ngày phải theo dạng dd/mm/yyyy." if v.get("tu_ngay") and not
                      valid_date(v["tu_ngay"]) else None).exec()
 
@@ -144,12 +143,12 @@ class EntryDialog(FormDialog):
         self.picker = EmployeePicker(self.db)
         if r.get("can_bo_id"):
             self.picker.set_by_id(r["can_bo_id"])
-        self.c_loai = choice(HINH_THUC, r.get("loai"))
+        self.c_loai = choice(ts.get("hinh_thuc_qd"), r.get("loai"))
         self.d_ngay = DateField(r.get("ngay_quyet_dinh") or "")
         self.e_so = QLineEdit(r.get("so_quyet_dinh") or "")
         self.e_ky = QLineEdit(r.get("nguoi_ky") or "")
-        self.c_cap = choice([""] + cand_data.CAP_BAC, r.get("cap_bac_moi") or "")
-        self.c_heso = SuggestCombo(cand_data.HE_SO_LUONG_HOP_LE, text=r.get("he_so_luong_moi") or "")
+        self.c_cap = choice([""] + ts.cap_bac(), r.get("cap_bac_moi") or "")
+        self.c_heso = SuggestCombo(ts.he_so_goi_y(), text=r.get("he_so_luong_moi") or "")
         self.e_lydo = QLineEdit(r.get("ly_do_ngoai_le") or "")
         self.e_lydo.setPlaceholderText("Bắt buộc khi hình thức Khác hoặc hệ số khác bảng theo cấp bậc")
         self.lbl_lydo = label("", "Note", wrap=True)
@@ -162,11 +161,16 @@ class EntryDialog(FormDialog):
         self.file = FilePicker(attachments.display_name(r.get("file_dinh_kem")))
         self.sync = QCheckBox("Cập nhật cấp bậc và hệ số lương hiện tại của cán bộ theo quyết định này")
         self.sync.setChecked(row is None)
+        if not panel.app.can("employees", "edit"):
+            # Đồng bộ ghi vào hồ sơ cán bộ nên cần quyền Sửa ở module Thông tin cán bộ.
+            self.sync.setChecked(False)
+            self.sync.setEnabled(False)
+            self.sync.setToolTip("Cần quyền Sửa ở module Thông tin cán bộ")
         for text, w in (("Cán bộ *", self.picker), ("Hình thức *", self.c_loai), ("Ngày quyết định", self.d_ngay),
                         ("Số quyết định", self.e_so), ("Người ký", self.e_ky), ("Cấp bậc mới", self.c_cap),
                         ("Hệ số lương mới", self.c_heso)):
             f.addRow(text, w)
-        f.addRow("", label("Nhập cấp bậc mới, hệ số lương mới hoặc cả hai (hệ số tự điền theo cấp bậc, "
+        f.addRow("", label("Nhập cấp bậc mới, hệ số lương mới hoặc cả hai (hệ số tự điền theo bảng tham số, "
                            "sửa lại được).", "Muted", wrap=True))
         f.addRow("Lý do (ngoài quy định)", self.e_lydo)
         f.addRow("", self.lbl_lydo)
@@ -185,7 +189,7 @@ class EntryDialog(FormDialog):
         self.lbl_lydo.setVisible(bool(why))
 
     def _on_rank(self, text):
-        coef = cand_data.HE_SO_LUONG_THEO_CAP_BAC.get(text)
+        coef = ts.he_so_chuan(text)
         if coef:
             self.c_heso.setText(coef)
 

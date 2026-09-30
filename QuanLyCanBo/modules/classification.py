@@ -4,6 +4,7 @@ import datetime
 
 from PySide6.QtWidgets import QHBoxLayout, QLineEdit, QStackedWidget, QVBoxLayout, QWidget
 
+from core import tham_so as ts
 import ui.widgets as W
 from ui.widgets import (DataTable, EmployeePicker, FormDialog, ListPage, SearchDialog, SuggestCombo, TabBar, ask,
                         button, card, choice, label, rule, warn)
@@ -11,18 +12,6 @@ from ui.widgets import (DataTable, EmployeePicker, FormDialog, ListPage, SearchD
 MODULE_ID = "classification"
 TABLE = "phan_loai_can_bo"
 LOAI_OPTIONS = ["Tháng", "Quý", "Năm"]
-XEP_LOAI_OPTIONS = [
-    "Hoàn thành xuất sắc nhiệm vụ",
-    "Hoàn thành tốt nhiệm vụ",
-    "Hoàn thành nhiệm vụ",
-    "Không hoàn thành nhiệm vụ",
-]
-XEP_LOAI_TAT = {
-    "Hoàn thành xuất sắc nhiệm vụ": "Xuất sắc",
-    "Hoàn thành tốt nhiệm vụ": "Tốt",
-    "Hoàn thành nhiệm vụ": "HT",
-    "Không hoàn thành nhiệm vụ": "Không HT",
-}
 QUY_LABELS = ["Quý I", "Quý II", "Quý III", "Quý IV"]
 THANG_LABELS = [f"Tháng {i}" for i in range(1, 13)]
 COLS = [("ma_cb", "Mã CB", 80), ("ho_ten", "Cán bộ", 160), ("loai", "Loại kỳ", 80), ("ky", "Kỳ đánh giá", 120),
@@ -133,7 +122,7 @@ class ListTab(ListPage):
         SearchDialog(self, [("ho_ten", "Họ và tên cán bộ", QLineEdit()),
                             ("loai", "Loại kỳ", choice([""] + LOAI_OPTIONS)),
                             ("nam", "Năm", QLineEdit()),
-                            ("xep_loai", "Xếp loại", choice([""] + XEP_LOAI_OPTIONS))]).exec()
+                            ("xep_loai", "Xếp loại", choice([""] + ts.xep_loai()))]).exec()
 
     def open_add(self):
         if not self.deny("add") and EntryDialog(self).exec():
@@ -237,7 +226,7 @@ class GridTab(QWidget):
             for p in periods:
                 xep, diem = d.get(p, (None, None))
                 row[f"k{p}"] = "—" if xep is None else (
-                    f"{XEP_LOAI_TAT.get(xep, xep)} ({diem:g})" if diem is not None else XEP_LOAI_TAT.get(xep, xep))
+                    f"{ts.xep_loai_tat(xep)} ({diem:g})" if diem is not None else ts.xep_loai_tat(xep))
             scores = [d[p][1] for p in periods if a <= p <= b and p in d and d[p][1] is not None]
             row["diem_tb"] = f"{sum(scores) / len(scores):.1f}" if scores else "—"
             rows.append(row)
@@ -272,7 +261,8 @@ class EntryDialog(FormDialog):
         self.c_loai = choice(LOAI_OPTIONS)
         self.c_nam = SuggestCombo(_nam_values(), text=str(_current_year()))
         self.c_ky = choice(THANG_LABELS, THANG_LABELS[datetime.date.today().month - 1])
-        self.c_xep = choice(XEP_LOAI_OPTIONS, XEP_LOAI_OPTIONS[1])
+        xl = ts.xep_loai()
+        self.c_xep = choice(xl, xl[1] if len(xl) > 1 else None)
         self.e_diem = QLineEdit()
         self.e_diem.setPlaceholderText("0 - 100 (không bắt buộc)")
         self.e_note = QLineEdit()
@@ -326,6 +316,19 @@ class EntryDialog(FormDialog):
         user = self.panel.app.user["username"]
         data = dict(can_bo_id=emp_id, loai=loai, nam=nam, ky_so=ky_so, ky=ky, xep_loai=self.c_xep.currentText(),
                     diem=diem, ghi_chu=self.e_note.text().strip(), created_by=user)
+        old = self.db.conn.execute(
+            "SELECT id, xep_loai, diem FROM phan_loai_can_bo WHERE can_bo_id=? AND loai=? AND nam=? AND ky_so IS ?",
+            (emp_id, loai, nam, ky_so)).fetchone()
+        if old:
+            diem_cu = "" if old["diem"] is None else f", điểm {old['diem']:g}"
+            if not ask(self, f"Cán bộ này đã có kết quả {ky}: {old['xep_loai']}{diem_cu}.\n"
+                             "Thay bằng kết quả mới?", "Đã có kết quả kỳ này", yes="Thay kết quả"):
+                return
+            self.db.update(TABLE, old["id"], data, touch_updated=False)
+            self.db.log(user, "Sửa phân loại cán bộ", f"{self.db.employee_label(emp_id)} - {ky}: {data['xep_loai']}")
+            self.panel.app.set_status("Đã cập nhật kết quả phân loại.")
+            self.accept()
+            return
         self.db.insert(TABLE, data)
         self.db.log(user, "Thêm phân loại cán bộ", f"{self.db.employee_label(emp_id)} - {ky}: {data['xep_loai']}")
         self.panel.app.set_status("Đã lưu kết quả phân loại.")

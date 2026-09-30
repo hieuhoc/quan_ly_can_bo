@@ -10,7 +10,7 @@ Quản trị viên cũng có thể bật/tắt các module nghiệp vụ ngay tr
 """
 
 ACTIONS = [("view", "Xem"), ("add", "Thêm"), ("edit", "Sửa"),
-           ("delete", "Xóa"), ("export", "Xuất CSV")]
+           ("delete", "Xóa"), ("export", "Xuất file / In")]
 ACTION_LABEL = dict(ACTIONS)
 
 # Trang chủ - luôn hiển thị cho MỌI tài khoản đã đăng nhập, không cần cấp
@@ -18,6 +18,7 @@ ACTION_LABEL = dict(ACTIONS)
 # ẩn theo quyền xem từng module của người dùng).
 HOME_MODULES = [
     ("dashboard", "Tổng quan", "🏠", "modules.dashboard", "Panel"),
+    ("reminders", "Cảnh báo đến hạn", "⏰", "modules.reminders", "Panel"),
 ]
 
 # (id, tiêu đề, biểu tượng, tên module python, tên lớp)
@@ -31,7 +32,9 @@ BUSINESS_MODULES = [
 # Các module chỉ quản trị viên thấy được, không thể bị tắt qua "Cấu hình module"
 ADMIN_MODULES = [
     ("accounts", "Quản trị tài khoản", "⚙", "modules.accounts", "Panel"),
-    ("settings_mod", "Cấu hình module", "🧩", "modules.settings_mod", "Panel"),
+    ("settings_mod", "Cấu hình", "🧩", "modules.settings_mod", "Panel"),
+    ("tham_so", "Tham số nghiệp vụ", "🎛", "modules.tham_so", "Panel"),
+    ("backup", "Sao lưu - Khôi phục", "💾", "modules.backup", "Panel"),
     ("logs", "Nhật ký hoạt động", "📜", "modules.logs", "Panel"),
 ]
 
