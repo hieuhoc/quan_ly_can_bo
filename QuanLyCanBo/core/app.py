@@ -10,11 +10,11 @@ from tkinter import messagebox, ttk
 
 from core import registry
 from core.security import check_password_policy
-from core.theme import C, FONT, center, make_card, setup_style
+from core.theme import C, FONT, center, draw_shield, setup_style
 from core.widgets import RoundedButton
 
 APP_TITLE = "QUẢN LÝ CÁN BỘ"
-VERSION = "3.1"
+VERSION = "3.8"
 BACKUP_INTERVAL_MIN = 30
 IDLE_TIMEOUT_MIN = 15
 ROLES = {"admin": "Quản trị viên", "user": "Người dùng"}
@@ -177,15 +177,21 @@ class App(tk.Tk):
 # ------------------------------------------------------------ đăng nhập
 class LoginFrame(tk.Frame):
     def __init__(self, parent, app):
-        super().__init__(parent, bg=C["primary"])
+        super().__init__(parent, bg=C["sidebar"])
         self.app = app
-        outer, card = make_card(self, padding=(38, 28))
+        outer = tk.Frame(self, bg=C["card"])
         outer.place(relx=0.5, rely=0.5, anchor="center")
+        tk.Frame(outer, height=4, bg=C["primary"]).pack(fill="x")
+        card = ttk.Frame(outer, style="Card.TFrame", padding=(40, 30))
+        card.pack(fill="both", expand=True)
 
-        tk.Label(card, text="🛡", font=("Segoe UI Emoji", 40), bg=C["card"], fg=C["primary"]).pack()
-        ttk.Label(card, text=APP_TITLE, style="CardTitle.TLabel", font=(FONT, 18, "bold")).pack(pady=(2, 0))
-        ttk.Label(card, text="Vui lòng đăng nhập để tiếp tục", style="CardMuted.TLabel").pack(pady=(2, 6))
-        tk.Frame(card, height=3, width=56, bg=C["gold"]).pack(pady=(2, 4))
+        logo = tk.Canvas(card, width=60, height=60, bg=C["card"], highlightthickness=0)
+        logo.pack()
+        draw_shield(logo, 60)
+        ttk.Label(card, text=APP_TITLE, style="CardTitle.TLabel", font=(FONT, 18, "bold"),
+                  foreground=C["primary"]).pack(pady=(10, 0))
+        ttk.Label(card, text="Đăng nhập để tiếp tục làm việc", style="CardMuted.TLabel",
+                  font=(FONT, 10)).pack(pady=(2, 8))
 
         ttk.Label(card, text="Tên đăng nhập", style="Card.TLabel").pack(anchor="w", pady=(12, 3))
         self.u = tk.StringVar()
@@ -211,7 +217,8 @@ class LoginFrame(tk.Frame):
         self.err = tk.StringVar()
         ttk.Label(card, textvariable=self.err, style="Error.TLabel", wraplength=310,
                   justify="left").pack(anchor="w", pady=(8, 0))
-        RoundedButton(card, text="ĐĂNG NHẬP", command=self.submit, variant="primary").pack(fill="x", pady=(10, 0))
+        RoundedButton(card, text="Đăng nhập", command=self.submit, variant="primary", height=40,
+                      font=(FONT, 11, "bold")).pack(fill="x", pady=(10, 0))
 
         import core.credentials as creds
         note = f"Phiên bản {VERSION}  •  Hoạt động ngoại tuyến"
@@ -260,9 +267,10 @@ class ChangePasswordDialog(tk.Toplevel):
         self.resizable(False, False)
         self.transient(app)
 
+        tk.Frame(self, height=3, bg=C["primary"]).pack(fill="x")
         frm = ttk.Frame(self, style="Card.TFrame", padding=26)
         frm.pack()
-        ttk.Label(frm, text="🔑  Đổi mật khẩu", style="CardTitle.TLabel").pack(anchor="w")
+        ttk.Label(frm, text="Đổi mật khẩu", style="CardTitle.TLabel").pack(anchor="w")
         if forced:
             ttk.Label(frm, style="CardMuted.TLabel", justify="left",
                       text="Bạn đăng nhập lần đầu hoặc mật khẩu vừa được đặt lại.\n"

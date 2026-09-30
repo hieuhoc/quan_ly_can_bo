@@ -27,7 +27,7 @@ class Panel(ttk.Frame):
         lo, card = make_card(self, padding=20)
         lo.pack(fill="both", expand=True)
         ttk.Label(card, text="Cấu hình module hệ thống", style="CardTitle.TLabel").pack(anchor="w")
-        tk.Frame(card, height=2, width=44, bg=C["gold"]).pack(anchor="w", pady=(4, 6))
+        tk.Frame(card, height=1, bg=C["border"]).pack(fill="x", pady=(10, 12))
         ttk.Label(card, style="CardMuted.TLabel", justify="left", wraplength=640,
                  text="Bỏ chọn một module để ẩn hoàn toàn khỏi thanh điều hướng của mọi tài khoản. "
                       "Dữ liệu đã nhập của module đó vẫn được lưu giữ và sẽ hiện lại khi bật lại. "

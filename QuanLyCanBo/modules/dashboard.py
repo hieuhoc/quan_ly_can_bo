@@ -43,7 +43,7 @@ class Panel(ttk.Frame):
 
         u = self.app.user
         ttk.Label(body, text=f"Chào {u['ho_ten'] or u['username']}, chúc một ngày làm việc hiệu quả.",
-                 font=("Segoe UI", 12, "bold"), background=C["bg"], foreground=C["primary_dark"]
+                 font=("Segoe UI", 15, "bold"), background=C["bg"], foreground=C["text"]
                  ).pack(anchor="w", padx=16, pady=(16, 4))
 
         any_visible = any(self.visible(m) for m in ("employees", "classification", "salary", "complaints"))
@@ -105,7 +105,7 @@ class Panel(ttk.Frame):
         lo, card = make_card(parent, padding=14)
         lo.pack(side=side, fill="both", expand=True, padx=6, pady=6)
         ttk.Label(card, text=title, style="CardTitle.TLabel", font=("Segoe UI", 11, "bold")).pack(anchor="w")
-        tk.Frame(card, height=2, width=40, bg=C["gold"]).pack(anchor="w", pady=(4, 8))
+        tk.Frame(card, height=1, bg=C["border"]).pack(fill="x", pady=(10, 12))
         chart = BarChart(card, width=420)
         chart.pack(fill="x")
         chart.set_data(data)
@@ -142,7 +142,7 @@ class Panel(ttk.Frame):
         lo.pack(fill="x", padx=16, pady=6)
         ttk.Label(card, text="Dữ liệu cán bộ cần bổ sung", style="CardTitle.TLabel",
                  font=("Segoe UI", 11, "bold")).pack(anchor="w")
-        tk.Frame(card, height=2, width=40, bg=C["gold"]).pack(anchor="w", pady=(4, 8))
+        tk.Frame(card, height=1, bg=C["border"]).pack(fill="x", pady=(10, 12))
         row = ttk.Frame(card, style="Card.TFrame")
         row.pack(fill="x")
         for i, (label, n) in enumerate([("Thiếu số điện thoại", missing_sdt),
@@ -164,7 +164,7 @@ class Panel(ttk.Frame):
         lo.pack(fill="x", padx=16, pady=6)
         ttk.Label(card, text="Đơn thư chưa giải quyết, nhận lâu nhất", style="CardTitle.TLabel",
                  font=("Segoe UI", 11, "bold")).pack(anchor="w")
-        tk.Frame(card, height=2, width=40, bg=C["gold"]).pack(anchor="w", pady=(4, 8))
+        tk.Frame(card, height=1, bg=C["border"]).pack(fill="x", pady=(10, 12))
         if not rows:
             ttk.Label(card, text="Không có đơn thư nào đang chờ xử lý.", style="CardMuted.TLabel").pack(anchor="w")
             return

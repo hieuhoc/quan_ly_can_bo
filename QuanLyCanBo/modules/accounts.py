@@ -53,7 +53,7 @@ class Panel(ttk.Frame):
         top = ttk.Frame(card, style="Card.TFrame")
         top.pack(fill="x")
         ttk.Label(top, text="Danh sách tài khoản", style="CardTitle.TLabel").pack(side="left")
-        tk.Frame(card, height=2, width=44, bg=C["gold"]).pack(anchor="w", pady=(4, 10))
+        tk.Frame(card, height=1, bg=C["border"]).pack(fill="x", pady=(10, 12))
 
         toolbar = ttk.Frame(card, style="Card.TFrame")
         toolbar.pack(fill="x", pady=(0, 10))

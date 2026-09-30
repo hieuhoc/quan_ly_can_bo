@@ -285,7 +285,7 @@ class Panel(ttk.Frame):
         top.pack(fill="x")
         ttk.Label(top, text="Danh sách cán bộ", style="CardTitle.TLabel").pack(side="left")
         ttk.Label(top, textvariable=self.count_var, style="CardMuted.TLabel").pack(side="right")
-        tk.Frame(card, height=2, width=44, bg=C["gold"]).pack(anchor="w", pady=(4, 10))
+        tk.Frame(card, height=1, bg=C["border"]).pack(fill="x", pady=(10, 12))
 
         bar = ttk.Frame(card, style="Card.TFrame")
         bar.pack(fill="x", pady=(0, 4))
@@ -356,10 +356,12 @@ class Panel(ttk.Frame):
         AdvancedSearchDialog(self)
 
     def apply_advanced(self, filters):
+        # Xóa ô tìm kiếm thường TRƯỚC: lệnh này kích hoạt _on_simple_search_typed,
+        # vốn xóa bộ lọc nâng cao - nếu gọi sau thì bộ lọc vừa áp bị mất ngay.
+        self.search_var.set("")
         self.adv_filters = filters
         n = len(filters)
         self.adv_note.set(f"Đang áp dụng tìm kiếm nâng cao ({n} tiêu chí) — gõ vào ô tìm kiếm thường để bỏ lọc này.")
-        self.search_var.set("")
         self.refresh()
 
     def _advanced_rows(self):
@@ -653,7 +655,7 @@ class ProfileDialog(tk.Toplevel):
 
         head = tk.Frame(self, bg=C["primary"])
         head.pack(fill="x")
-        tk.Label(head, text=row["ho_ten"], bg=C["primary"], fg=C["gold"],
+        tk.Label(head, text=row["ho_ten"], bg=C["primary"], fg="white",
                  font=("Segoe UI", 15, "bold")).pack(anchor="w", padx=18, pady=(14, 0))
         tk.Label(head, text=f"Mã cán bộ: {row['ma_cb']}", bg=C["primary"], fg="white",
                  font=("Segoe UI", 10)).pack(anchor="w", padx=18, pady=(0, 12))

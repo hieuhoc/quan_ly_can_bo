@@ -45,8 +45,11 @@ class ScrollableFrame(ttk.Frame):
 
 def section_label(parent, text):
     frm = ttk.Frame(parent, style="Card.TFrame")
-    ttk.Label(frm, text=text, style="Section.TLabel").pack(anchor="w")
-    tk.Frame(frm, height=2, width=36, bg=C["gold"]).pack(anchor="w", pady=(2, 6))
+    row = ttk.Frame(frm, style="Card.TFrame")
+    row.pack(fill="x", pady=(4, 6))
+    tk.Frame(row, width=3, height=16, bg=C["primary"]).pack(side="left", padx=(0, 8))
+    ttk.Label(row, text=text.upper(), style="Section.TLabel").pack(side="left")
+    tk.Frame(row, height=1, bg=C["border"]).pack(side="left", fill="x", expand=True, padx=(10, 0))
     return frm
 
 
@@ -65,14 +68,19 @@ class BorderedTable(ttk.Frame):
     đây.
     """
 
-    ROW_H = 28
-    HEAD_H = 32
+    ROW_H = 34
+    HEAD_H = 36
+    PAD_X = 10
+    MAX_AUTO_W = 360      # cột tự giãn theo nội dung nhưng không rộng quá mức này
+    AUTOFIT_ROWS = 400    # chỉ đo chừng này dòng đầu để bảng lớn vẫn mở nhanh
 
     def __init__(self, parent, columns, sortable=True):
         super().__init__(parent, style="Card.TFrame")
         self._cols = [c[0] for c in columns]
         self._col_text = {c[0]: c[1] for c in columns}
-        self._col_width = {c[0]: c[2] for c in columns}
+        self._min_width = {c[0]: c[2] for c in columns}
+        self._col_width = dict(self._min_width)
+        self._widths_dirty = True
         self._sortable = sortable
         self._rows = {}
         self._order = []
@@ -83,11 +91,15 @@ class BorderedTable(ttk.Frame):
         self._sort_state = {"col": None, "reverse": False}
         self._auto_n = 0
         self._redraw_pending = False
+        import tkinter.font as tkfont
+        self._font = tkfont.Font(family=FONT, size=10)
+        self._head_font = tkfont.Font(family=FONT, size=9, weight="bold")
+        self._fit_cache = {}
 
         self.columnconfigure(0, weight=1)
         self.rowconfigure(1, weight=1)
 
-        self.header_canvas = tk.Canvas(self, height=self.HEAD_H, bg=C["primary"], highlightthickness=0)
+        self.header_canvas = tk.Canvas(self, height=self.HEAD_H, bg=C["table_head"], highlightthickness=0)
         self.header_canvas.grid(row=0, column=0, sticky="ew")
         self.body_canvas = tk.Canvas(self, bg="white", highlightthickness=0, takefocus=1)
         self.body_canvas.grid(row=1, column=0, sticky="nsew")
@@ -124,20 +136,47 @@ class BorderedTable(ttk.Frame):
     def _total_width(self):
         return sum(self._col_width[c] for c in self._cols) or 1
 
+    def _fit(self, text, width, font=None):
+        """Cắt bớt chữ (thêm "…") cho vừa ô - không để chữ tràn sang cột bên cạnh."""
+        font = font or self._font
+        key = (text, width, str(font))
+        hit = self._fit_cache.get(key)
+        if hit is not None:
+            return hit
+        avail = width - 2 * self.PAD_X
+        out = text
+        if font.measure(text) > avail:
+            lo, hi = 0, len(text)
+            while lo < hi:
+                mid = (lo + hi + 1) // 2
+                if font.measure(text[:mid] + "…") <= avail:
+                    lo = mid
+                else:
+                    hi = mid - 1
+            out = text[:lo].rstrip() + "…" if lo else ""
+        if len(self._fit_cache) > 5000:
+            self._fit_cache.clear()
+        self._fit_cache[key] = out
+        return out
+
     def _draw_header(self):
         self.header_canvas.delete("all")
-        w = self._total_width()
+        total_w = self._total_width()
+        vis_w = max(self.header_canvas.winfo_width(), 1)
+        w = max(total_w, vis_w)
         self.header_canvas.configure(scrollregion=(0, 0, w, self.HEAD_H))
+        self.header_canvas.create_rectangle(0, 0, w, self.HEAD_H, fill=C["table_head"], outline="")
         x = 0
-        for key in self._cols:
+        for i, key in enumerate(self._cols):
             cw = self._col_width[key]
-            text = self._col_text[key]
-            self.header_canvas.create_rectangle(x, 0, x + cw, self.HEAD_H, fill=C["primary"],
-                                                outline=C["primary_dark"], width=1)
-            self.header_canvas.create_text(x + 6, self.HEAD_H // 2, text=text, anchor="w",
-                                           fill="white", font=(FONT, 10, "bold"))
+            text = self._fit(self._col_text[key].upper(), cw, self._head_font)
+            self.header_canvas.create_text(x + self.PAD_X, self.HEAD_H // 2, text=text, anchor="w",
+                                           fill=C["table_head_text"], font=self._head_font)
+            if i:
+                self.header_canvas.create_line(x, 9, x, self.HEAD_H - 9, fill=C["neutral_border"])
             x += cw
-        self.header_canvas.xview_moveto(self.body_canvas.xview()[0] if self._order or True else 0)
+        self.header_canvas.create_line(0, self.HEAD_H - 1, w, self.HEAD_H - 1, fill=C["neutral_border"])
+        self.header_canvas.xview_moveto(self.body_canvas.xview()[0])
 
     def _row_colors(self, iid):
         bg, fg = "white", C["text"]
@@ -148,7 +187,7 @@ class BorderedTable(ttk.Frame):
             if "foreground" in st:
                 fg = st["foreground"]
         if iid == self._hover and iid != self._selected:
-            bg = C["neutral_lighter"]
+            bg = C["hover_row"]
         if iid == self._selected:
             bg, fg = C["sel"], C["text"]
         return bg, fg
@@ -158,32 +197,54 @@ class BorderedTable(ttk.Frame):
             self._redraw_pending = True
             self.after_idle(self._redraw)
 
+    def _autofit(self):
+        """Giãn từng cột vừa đủ hiện trọn tiêu đề và nội dung (tối thiểu bằng
+        độ rộng khai báo, tối đa MAX_AUTO_W) - hạn chế chữ bị cắt "…"."""
+        self._widths_dirty = False
+        pad = 2 * self.PAD_X + 4
+        for j, key in enumerate(self._cols):
+            best = self._head_font.measure(self._col_text[key].upper()) + pad
+            for iid in self._order[:self.AUTOFIT_ROWS]:
+                vals = self._rows[iid]["values"]
+                if j < len(vals) and vals[j] not in (None, ""):
+                    best = max(best, self._font.measure(str(vals[j])) + pad)
+                    if best >= self.MAX_AUTO_W:
+                        break
+            self._col_width[key] = max(self._min_width[key], min(best, self.MAX_AUTO_W))
+
     def _redraw(self):
         self._redraw_pending = False
         if not self.winfo_exists():
             return
+        if self._widths_dirty:
+            self._autofit()
         self.body_canvas.delete("all")
         total_w = self._total_width()
         vis_w = max(self.body_canvas.winfo_width(), 1)
         w = max(total_w, vis_w)
         h = max(len(self._order) * self.ROW_H, 1)
         self.body_canvas.configure(scrollregion=(0, 0, w, h))
+        if not self._order:
+            self.body_canvas.create_text(vis_w // 2, 48, text="Không có dữ liệu", fill=C["muted"],
+                                         font=(FONT, 10))
         y = 0
         for iid in self._order:
             vals = self._rows[iid]["values"]
             bg, fg = self._row_colors(iid)
+            self.body_canvas.create_rectangle(0, y, w, y + self.ROW_H, fill=bg, outline="")
+            if iid == self._selected:
+                self.body_canvas.create_rectangle(0, y, 3, y + self.ROW_H, fill=C["primary"], outline="")
             x = 0
             for j, key in enumerate(self._cols):
                 cw = self._col_width[key]
                 val = vals[j] if j < len(vals) else ""
-                self.body_canvas.create_rectangle(x, y, x + cw, y + self.ROW_H, fill=bg,
-                                                  outline=C["border"], width=1)
-                self.body_canvas.create_text(x + 6, y + self.ROW_H // 2, text="" if val is None else str(val),
-                                             anchor="w", fill=fg, font=(FONT, 10))
+                text = self._fit("" if val is None else str(val), cw)
+                self.body_canvas.create_text(x + self.PAD_X, y + self.ROW_H // 2, text=text,
+                                             anchor="w", fill=fg, font=self._font)
                 x += cw
-            if total_w < vis_w:
-                self.body_canvas.create_rectangle(total_w, y, vis_w, y + self.ROW_H, fill=bg, outline=bg)
+            self.body_canvas.create_line(0, y + self.ROW_H - 1, w, y + self.ROW_H - 1, fill=C["line"])
             y += self.ROW_H
+        self._draw_header()
 
     # ---------------------------------------------------- tương tác chuột/phím
     def _row_at(self, y):
@@ -254,8 +315,8 @@ class BorderedTable(ttk.Frame):
             self._rows[iid]["tags"] = tuple(tags)
         self._sort_state = {"col": col, "reverse": reverse}
         for key in self._cols:
-            arrow = (" ▾" if reverse else " ▴") if key == col else ""
-            base = self._col_text[key].rstrip(" ▾▴")
+            arrow = (" ▼" if reverse else " ▲") if key == col else ""
+            base = self._col_text[key].rstrip(" ▾▴▼▲")
             self._col_text[key] = base + arrow
         self._draw_header()
         self._schedule_redraw()
@@ -270,6 +331,7 @@ class BorderedTable(ttk.Frame):
             self._auto_n += 1
         iid = str(iid)
         self._rows[iid] = {"values": tuple(values), "tags": tuple(tags)}
+        self._widths_dirty = True
         if index == "end" or index is None:
             self._order.append(iid)
         else:
@@ -313,6 +375,7 @@ class BorderedTable(ttk.Frame):
                 self._rows[iid]["tags"] = tuple(kw["tags"])
             if "values" in kw:
                 self._rows[iid]["values"] = tuple(kw["values"])
+                self._widths_dirty = True
             self._schedule_redraw()
             return None
         if iid not in self._rows:
@@ -340,12 +403,15 @@ class BorderedTable(ttk.Frame):
             return {"text": self._col_text.get(col, "")}
         if text is not None:
             self._col_text[col] = text
+            self._widths_dirty = True
         self._draw_header()
         return None
 
     def column(self, col, **kw):
         if "width" in kw:
+            self._min_width[col] = kw["width"]
             self._col_width[col] = kw["width"]
+            self._widths_dirty = True
         if not kw:
             return {"width": self._col_width.get(col, 0)}
         self._draw_header()
@@ -427,10 +493,13 @@ class BarChart(tk.Canvas):
             yc = y0 + self._row_h / 2
             bar_w = (val / max_val) * bar_area if max_val else 0
             disp = label if len(label) <= 27 else label[:26] + "…"
-            self.create_text(self._label_w - 8, yc, text=disp, anchor="e",
-                             font=("Segoe UI", 9), fill=C["text"])
-            self.create_rectangle(self._label_w, y0 + self._row_h * 0.22,
-                                  self._label_w + max(bar_w, 2), y0 + self._row_h * 0.78,
+            self.create_text(self._label_w - 10, yc, text=disp, anchor="e",
+                             font=("Segoe UI", 9), fill=C["muted"])
+            self.create_rectangle(self._label_w, y0 + self._row_h * 0.3,
+                                  self._label_w + bar_area, y0 + self._row_h * 0.7,
+                                  fill=C["neutral_lighter"], outline="")
+            self.create_rectangle(self._label_w, y0 + self._row_h * 0.3,
+                                  self._label_w + max(bar_w, 2), y0 + self._row_h * 0.7,
                                   fill=self.bar_color, outline="")
             self.create_text(self._label_w + bar_w + 8, yc, text=f"{val}{value_suffix}",
                              anchor="w", font=("Segoe UI", 9, "bold"), fill=C["text"])
@@ -440,11 +509,12 @@ def stat_card(parent, value, label, color=None):
     """Thẻ số liệu nhỏ (vd '128' / 'Tổng số cán bộ') dùng ở trang Tổng quan."""
     color = color or C["primary"]
     outer = tk.Frame(parent, bg=C["card"], highlightbackground=C["border"], highlightthickness=1)
+    tk.Frame(outer, width=4, bg=color).pack(side="left", fill="y")
     inner = ttk.Frame(outer, style="Card.TFrame", padding=(16, 12))
-    inner.pack(fill="both", expand=True)
-    tk.Frame(inner, height=3, width=28, bg=color).pack(anchor="w", pady=(0, 6))
-    tk.Label(inner, text=str(value), bg=C["card"], fg=color, font=("Segoe UI", 22, "bold")).pack(anchor="w")
-    ttk.Label(inner, text=label, style="CardMuted.TLabel", wraplength=125, justify="left").pack(anchor="w")
+    inner.pack(side="left", fill="both", expand=True)
+    ttk.Label(inner, text=label, style="CardMuted.TLabel", wraplength=150, justify="left",
+              font=(FONT, 9)).pack(anchor="w")
+    tk.Label(inner, text=str(value), bg=C["card"], fg=C["text"], font=(FONT, 24, "bold")).pack(anchor="w", pady=(2, 0))
     return outer
 
 
@@ -660,12 +730,12 @@ class RoundedButton(tk.Canvas):
                           border_hover=C["neutral_border_hover"]),
         "danger": dict(bg=C["danger"], hover=C["danger_hover"], pressed=C["danger_pressed"],
                        fg="white", border=None),
-        "header": dict(bg=C["primary_dark"], hover=C["primary_light"], pressed=C["primary_light"],
-                       fg="white", border=None),
+        "header": dict(bg=C["header"], hover=C["neutral_lighter"], pressed=C["neutral_light"],
+                       fg=C["text"], border=C["border"], border_hover=C["neutral_border"]),
     }
 
     def __init__(self, parent, text="", command=None, variant="secondary",
-                width=None, height=32, radius=6, font=None, parent_bg=None):
+                width=None, height=34, radius=6, font=None, parent_bg=None):
         self._variant = variant
         self._text = text
         self.command = command
@@ -673,12 +743,23 @@ class RoundedButton(tk.Canvas):
         self._hover = False
         self._pressed = False
         self._radius = radius
-        self._font = font or (FONT, 10, "bold")
+        self._font = font or (FONT, 10, "bold" if variant in ("primary", "danger") else "normal")
         import tkinter.font as tkfont
         weight = "bold" if (len(self._font) > 2 and self._font[2] == "bold") else "normal"
         self._tkfont = tkfont.Font(family=self._font[0], size=self._font[1], weight=weight)
         text_w = self._tkfont.measure(self._text)
         self._min_w = text_w + 28
+        if parent_bg is None:
+            try:
+                parent_bg = parent.cget("background")
+            except tk.TclError:
+                parent_bg = None
+            if not parent_bg:
+                try:
+                    parent_bg = ttk.Style(parent).lookup(parent.cget("style") or parent.winfo_class(),
+                                                         "background")
+                except tk.TclError:
+                    parent_bg = None
         bg = parent_bg or C["card"]
         super().__init__(parent, width=(width or self._min_w), height=height,
                          bg=bg, highlightthickness=0, bd=0)
@@ -708,7 +789,9 @@ class RoundedButton(tk.Canvas):
             bg, fg, border = cfg["hover"], cfg["fg"], cfg.get("border_hover", cfg.get("border"))
         else:
             bg, fg, border = cfg["bg"], cfg["fg"], cfg.get("border")
-        pts = self._round_points(0.5, 0.5, w - 0.5, h - 0.5, self._radius)
+        # Tọa độ nguyên, lùi vào 1px ở cạnh phải/dưới: điểm ảnh cuối cùng của
+        # Canvas là w-1, vẽ tại w-0.5 sẽ bị làm tròn ra ngoài và mất viền.
+        pts = self._round_points(0, 0, w - 1, h - 1, self._radius)
         self.create_polygon(pts, smooth=True, splinesteps=8, fill=bg,
                             outline=(border or bg), width=1)
         self.create_text(w / 2, h / 2, text=self._text, fill=fg, font=self._font)
@@ -736,6 +819,11 @@ class RoundedButton(tk.Canvas):
             self._draw()
 
     config = configure
+
+    def set_variant(self, variant):
+        """Đổi kiểu nút (vd nút lọc đang chọn -> 'primary', còn lại 'secondary')."""
+        self._variant = variant
+        self._draw()
 
     def state(self, states=None):
         if states is None:
@@ -800,17 +888,25 @@ class DialogShell:
         win.minsize(min_width, min_height)
         win.geometry(f"{width}x{height}")
 
-        # Không vẽ thêm thanh tiêu đề riêng ở đây - dùng đúng thanh tiêu đề
-        # thật của Windows (đã có tên cửa sổ, nút đóng, và có thể kéo góc/
-        # cạnh để đổi kích thước hay kéo cả cửa sổ theo con trỏ chuột như
-        # mọi cửa sổ khác). Chỉ giữ một vạch vàng mảnh để nhận diện thương
-        # hiệu, tránh chồng hai "tiêu đề" nhìn rối mắt.
-        tk.Frame(win, height=4, bg=C["gold"]).pack(fill="x", side="top")
+        # Vẫn dùng thanh tiêu đề thật của Windows (kéo, đổi kích thước, nút
+        # đóng); bên trong chỉ thêm dải màu thương hiệu mảnh + tên hộp thoại
+        # cỡ lớn để người dùng biết ngay mình đang thao tác gì.
+        win.configure(bg=C["card"])
+        tk.Frame(win, height=3, bg=C["primary"]).pack(fill="x", side="top")
+        head = tk.Frame(win, bg=C["card"])
+        head.pack(fill="x", side="top")
+        tk.Label(head, text=title, bg=C["card"], fg=C["text"], font=(FONT, 13, "bold"),
+                 anchor="w").pack(fill="x", padx=20, pady=(14, 10))
+        tk.Frame(win, height=1, bg=C["border"]).pack(fill="x", side="top")
+
+        footer_wrap = tk.Frame(win, bg=C["bg"])
+        footer_wrap.pack(fill="x", side="bottom")
+        tk.Frame(footer_wrap, height=1, bg=C["border"]).pack(fill="x")
+        self.footer = ttk.Frame(footer_wrap, padding=(16, 10))
+        self.footer.pack(fill="x")
 
         self.scroll = ScrollableFrame(win, width=width - 24)
-        self.scroll.pack(fill="both", expand=True, padx=12, pady=(10, 4))
-        self.footer = ttk.Frame(win, padding=(12, 8))
-        self.footer.pack(fill="x", side="bottom")
+        self.scroll.pack(fill="both", expand=True, padx=(20, 8), pady=(8, 4))
 
         self.win = win
         self.body = self.scroll.body

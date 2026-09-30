@@ -5,9 +5,17 @@ import tkinter as tk
 from tkinter import ttk
 
 from core import registry
-from core.app import ChangePasswordDialog, ROLES
-from core.theme import C, FONT
+from core.app import APP_TITLE, VERSION, ChangePasswordDialog, ROLES
+from core.theme import C, FONT, draw_shield
 from core.widgets import RoundedButton
+
+
+def _initials(name):
+    """'Nguyễn Văn An' -> 'NA' (chữ cái đầu của họ và tên) để vẽ ảnh đại diện."""
+    parts = [p for p in name.split() if p]
+    if not parts:
+        return "?"
+    return (parts[0][0] + (parts[-1][0] if len(parts) > 1 else "")).upper()
 
 
 class Shell(ttk.Frame):
@@ -23,168 +31,103 @@ class Shell(ttk.Frame):
         body = ttk.Frame(self)
         body.pack(fill="both", expand=True)
         self._build_sidebar(body)
-        self.content = ttk.Frame(body, padding=14)
+        self.content = ttk.Frame(body, padding=(20, 18))
         self.content.pack(side="left", fill="both", expand=True)
         self._build_status()
 
         self.open_module("dashboard")
 
-    # ---- đầu trang
+    # ---- đầu trang: nền trắng, tên phần mềm bên trái, người dùng bên phải
     def _build_header(self):
         u = self.app.user
-        h = ttk.Frame(self, style="Header.TFrame", padding=(18, 12))
-        h.pack(fill="x")
-        h.configure(style="TFrame")
-        bar = tk.Frame(h, bg=C["primary"])
+        bar = tk.Frame(self, bg=C["header"])
         bar.pack(fill="x")
-        inner = tk.Frame(bar, bg=C["primary"])
-        inner.pack(fill="x", padx=18, pady=12)
-        tk.Label(inner, text="🛡  " + "QUẢN LÝ CÁN BỘ", bg=C["primary"], fg=C["gold"],
-                 font=(FONT, 16, "bold")).pack(side="left")
-        right = tk.Frame(inner, bg=C["primary"])
-        right.pack(side="right")
-        tk.Label(right, text=f"👤  {u['ho_ten'] or u['username']}   •   {ROLES.get(u['role'], u['role'])}",
-                 bg=C["primary"], fg="white", font=(FONT, 10)).pack(side="left", padx=(0, 16))
-        RoundedButton(right, text="🔑  Đổi mật khẩu", command=self.change_password, variant="header").pack(side="left", padx=3)
-        RoundedButton(right, text="ℹ  Giới thiệu", command=self.show_about, variant="header").pack(side="left", padx=3)
-        RoundedButton(right, text="⏻  Đăng xuất", command=self.app.logout, variant="header").pack(side="left", padx=3)
-        tk.Frame(self, height=3, bg=C["gold"]).pack(fill="x")
+        inner = tk.Frame(bar, bg=C["header"])
+        inner.pack(fill="x", padx=20, pady=10)
 
-    # ---- thanh bên (thu gọn mặc định, tự mở rộng khi trỏ chuột vào)
-    SIDEBAR_COLLAPSED_W = 64
-    SIDEBAR_EXPANDED_W = 250
+        brand = tk.Frame(inner, bg=C["header"])
+        brand.pack(side="left")
+        badge = tk.Canvas(brand, width=38, height=38, bg=C["header"], highlightthickness=0)
+        badge.pack(side="left", padx=(0, 12))
+        draw_shield(badge, 38)
+        titles = tk.Frame(brand, bg=C["header"])
+        titles.pack(side="left")
+        tk.Label(titles, text=APP_TITLE, bg=C["header"], fg=C["primary"],
+                 font=(FONT, 14, "bold")).pack(anchor="w")
+        tk.Label(titles, text="Hệ thống quản lý hồ sơ cán bộ", bg=C["header"], fg=C["muted"],
+                 font=(FONT, 9)).pack(anchor="w")
+
+        right = tk.Frame(inner, bg=C["header"])
+        right.pack(side="right")
+        RoundedButton(right, text="Đăng xuất", command=self.app.logout, variant="header").pack(side="right", padx=(6, 0))
+        RoundedButton(right, text="Giới thiệu", command=self.show_about, variant="header").pack(side="right", padx=(6, 0))
+        RoundedButton(right, text="Đổi mật khẩu", command=self.change_password, variant="header").pack(side="right", padx=(6, 0))
+        tk.Frame(right, width=1, height=30, bg=C["border"]).pack(side="right", padx=16)
+
+        who = tk.Frame(right, bg=C["header"])
+        who.pack(side="right")
+        name = u["ho_ten"] or u["username"]
+        avatar = tk.Canvas(who, width=34, height=34, bg=C["header"], highlightthickness=0)
+        avatar.pack(side="left", padx=(0, 10))
+        avatar.create_oval(1, 1, 33, 33, fill=C["primary_soft"], outline="")
+        avatar.create_text(17, 17, text=_initials(name), fill=C["primary"], font=(FONT, 10, "bold"))
+        info = tk.Frame(who, bg=C["header"])
+        info.pack(side="left")
+        tk.Label(info, text=name, bg=C["header"], fg=C["text"], font=(FONT, 10, "bold")).pack(anchor="w")
+        tk.Label(info, text=ROLES.get(u["role"], u["role"]), bg=C["header"], fg=C["muted"],
+                 font=(FONT, 9)).pack(anchor="w")
+        tk.Frame(self, height=1, bg=C["border"]).pack(fill="x")
+
+    # ---- thanh bên: luôn mở rộng, nhóm theo Tổng quan / Nghiệp vụ / Quản trị
+    SIDEBAR_W = 256
 
     def _build_sidebar(self, parent):
-        side = tk.Frame(parent, bg=C["sidebar"], width=self.SIDEBAR_COLLAPSED_W)
+        side = tk.Frame(parent, bg=C["sidebar"], width=self.SIDEBAR_W)
         side.pack(side="left", fill="y")
         side.pack_propagate(False)
         self.sidebar = side
-        self._sidebar_w = self.SIDEBAR_COLLAPSED_W
-        self._sidebar_expanded = False
-        self._sidebar_anim_after = None
-        self._sidebar_leave_after = None
-        self._nav_meta = []     # (button, icon, title) - đổi chữ khi mở rộng
-        self._hide_when_collapsed = {}  # label -> chữ gốc; rỗng chữ khi thu gọn (KHÔNG pack_forget,
-                                        # để không bị Tkinter đẩy lệch vị trí khi pack() lại)
+        tk.Frame(side, height=12, bg=C["sidebar"]).pack(fill="x")
 
         for mod_id, title, icon, *_ in registry.HOME_MODULES:
             self._add_nav(side, mod_id, icon, title)
-        tk.Frame(side, height=1, bg="#453A63").pack(fill="x", padx=18, pady=(10, 0))
-
-        lbl = tk.Label(side, text="MODULE", bg=C["sidebar"], fg="#8F86A8", font=(FONT, 9, "bold"))
-        lbl.pack(anchor="w", padx=18, pady=(18, 4))
-        self._hide_when_collapsed[lbl] = "MODULE"
 
         disabled = self.db.disabled_modules()
         biz = [m for m in registry.BUSINESS_MODULES if m[0] not in disabled and self.app.can(m[0], "view")]
-        for mod_id, title, icon, *_ in biz:
-            self._add_nav(side, mod_id, icon, title)
+        if biz:
+            self._nav_group(side, "NGHIỆP VỤ")
+            for mod_id, title, icon, *_ in biz:
+                self._add_nav(side, mod_id, icon, title)
 
         if self.app.user["role"] == "admin":
-            lbl2 = tk.Label(side, text="QUẢN TRỊ HỆ THỐNG", bg=C["sidebar"], fg="#8F86A8", font=(FONT, 9, "bold"))
-            lbl2.pack(anchor="w", padx=18, pady=(18, 4))
-            self._hide_when_collapsed[lbl2] = "QUẢN TRỊ HỆ THỐNG"
+            self._nav_group(side, "QUẢN TRỊ HỆ THỐNG")
             for mod_id, title, icon, *_ in registry.ADMIN_MODULES:
                 self._add_nav(side, mod_id, icon, title)
 
         if not biz and self.app.user["role"] != "admin":
-            lbl3 = tk.Label(side, text="Tài khoản của bạn chưa được\ncấp quyền truy cập module nào.\n"
-                                       "Vui lòng liên hệ quản trị viên.",
-                            bg=C["sidebar"], fg="#C9C2DE", font=(FONT, 9), justify="left", wraplength=210)
-            lbl3.pack(anchor="w", padx=18, pady=18)
-            self._hide_when_collapsed[lbl3] = lbl3.cget("text")
+            tk.Label(side, text="Tài khoản của bạn chưa được cấp quyền truy cập module nào. "
+                                "Vui lòng liên hệ quản trị viên.",
+                     bg=C["sidebar"], fg=C["sidebar_text"], font=(FONT, 9), justify="left",
+                     wraplength=self.SIDEBAR_W - 40).pack(anchor="w", padx=18, pady=18)
 
-        spacer = tk.Frame(side, bg=C["sidebar"])
-        spacer.pack(fill="both", expand=True)
-        lbl4 = tk.Label(side, text="Phiên bản 3.1", bg=C["sidebar"], fg="#6E6486", font=(FONT, 8))
-        lbl4.pack(anchor="w", padx=18, pady=(0, 14))
-        self._hide_when_collapsed[lbl4] = "Phiên bản 3.1"
+        tk.Frame(side, bg=C["sidebar"]).pack(fill="both", expand=True)
+        tk.Frame(side, height=1, bg=C["sidebar_line"]).pack(fill="x", padx=18)
+        tk.Label(side, text=f"Phiên bản {VERSION}  •  Ngoại tuyến", bg=C["sidebar"], fg=C["sidebar_muted"],
+                 font=(FONT, 8)).pack(anchor="w", padx=18, pady=12)
 
-        for w in self._hide_when_collapsed:
-            w.configure(text="")  # bắt đầu ở trạng thái thu gọn: rỗng chữ (giữ nguyên vị trí đóng gói)
-
-        self._bind_hover_recursive(side)
+    def _nav_group(self, parent, text):
+        tk.Label(parent, text=text, bg=C["sidebar"], fg=C["sidebar_muted"],
+                 font=(FONT, 8, "bold")).pack(anchor="w", padx=20, pady=(18, 6))
 
     def _add_nav(self, parent, mod_id, icon, title):
-        btn = ttk.Button(parent, text=icon, style="Nav.TButton",
+        btn = ttk.Button(parent, text=f"{icon}   {title}", style="Nav.TButton",
                          command=lambda: self.open_module(mod_id))
-        btn.pack(fill="x")
+        btn.pack(fill="x", padx=8, pady=1)
         self.nav_buttons[mod_id] = btn
-        self._nav_meta.append((btn, icon, title))
-
-    def _bind_hover_recursive(self, widget):
-        widget.bind("<Enter>", self._on_sidebar_enter, add="+")
-        widget.bind("<Leave>", self._on_sidebar_leave, add="+")
-        for child in widget.winfo_children():
-            self._bind_hover_recursive(child)
-
-    def _on_sidebar_enter(self, _e=None):
-        if self._sidebar_leave_after:
-            self.sidebar.after_cancel(self._sidebar_leave_after)
-            self._sidebar_leave_after = None
-        if not self._sidebar_expanded:
-            self._sidebar_expanded = True
-            for btn, icon, title in self._nav_meta:
-                btn.configure(text=f"{icon}  {title}")
-            self._reflow_labels(show=True)
-            self._animate_sidebar(self.SIDEBAR_EXPANDED_W)
-
-    def _on_sidebar_leave(self, _e=None):
-        # Con tro co the dang di chuyen giua cac widget con ben trong sidebar
-        # (Leave/Enter rieng cho tung widget) - doi 80ms roi kiem tra CON TRO
-        # co thuc su con nam trong vung sidebar hay khong truoc khi thu gon,
-        # tranh nhap nhay khi di chuyen qua lai giua cac nut.
-        if self._sidebar_leave_after:
-            self.sidebar.after_cancel(self._sidebar_leave_after)
-        self._sidebar_leave_after = self.sidebar.after(80, self._check_really_left)
-
-    def _check_really_left(self):
-        self._sidebar_leave_after = None
-        try:
-            x, y = self.sidebar.winfo_pointerxy()
-            under = self.sidebar.winfo_containing(x, y)
-        except (tk.TclError, KeyError):
-            under = None
-        w, still_inside = under, False
-        while w is not None:
-            if w == self.sidebar:
-                still_inside = True
-                break
-            w = w.master
-        if still_inside:
-            return
-        self._sidebar_expanded = False
-        for btn, icon, _title in self._nav_meta:
-            btn.configure(text=icon)
-        self._reflow_labels(show=False)
-        self._animate_sidebar(self.SIDEBAR_COLLAPSED_W)
-
-    def _reflow_labels(self, show):
-        for w, orig_text in self._hide_when_collapsed.items():
-            w.configure(text=orig_text if show else "")
-
-    def _animate_sidebar(self, target_w, steps=8, delay=12):
-        if self._sidebar_anim_after:
-            self.sidebar.after_cancel(self._sidebar_anim_after)
-            self._sidebar_anim_after = None
-        start_w = self._sidebar_w
-
-        def step(i):
-            w = target_w if i >= steps else int(start_w + (target_w - start_w) * (i / steps))
-            self._sidebar_w = w
-            try:
-                self.sidebar.configure(width=w)
-            except tk.TclError:
-                return
-            if i < steps:
-                self._sidebar_anim_after = self.sidebar.after(delay, lambda: step(i + 1))
-            else:
-                self._sidebar_anim_after = None
-        step(1)
 
     def _build_status(self):
         bar = tk.Frame(self, bg=C["status"])
         bar.pack(side="bottom", fill="x")
+        tk.Frame(bar, height=1, bg=C["border"]).pack(fill="x", side="top")
         ttk.Label(bar, textvariable=self.app.status, style="Status.TLabel").pack(side="left")
         u = self.app.user
         from core.db import parse_perms
@@ -234,11 +177,13 @@ class Shell(ttk.Frame):
         from core.theme import center
         frm = ttk.Frame(win, style="Card.TFrame", padding=26)
         frm.pack()
-        tk.Label(frm, text="🛡", font=("Segoe UI Emoji", 36), bg=C["card"], fg=C["primary"]).pack()
+        logo = tk.Canvas(frm, width=56, height=56, bg=C["card"], highlightthickness=0)
+        logo.pack()
+        draw_shield(logo, 56)
         ttk.Label(frm, text="PHẦN MỀM QUẢN LÝ CÁN BỘ", style="CardTitle.TLabel",
                  font=(FONT, 13, "bold")).pack(pady=(4, 0))
-        ttk.Label(frm, text="Phiên bản 3.1  •  Kiến trúc module", style="CardMuted.TLabel").pack(pady=(2, 10))
-        tk.Frame(frm, height=2, width=50, bg=C["gold"]).pack(pady=(0, 10))
+        ttk.Label(frm, text=f"Phiên bản {VERSION}  •  Kiến trúc module", style="CardMuted.TLabel").pack(pady=(2, 10))
+        tk.Frame(frm, height=1, width=260, bg=C["border"]).pack(pady=(0, 10))
         ttk.Label(frm, style="Card.TLabel", justify="left", wraplength=340,
                  text="Quản lý thông tin cán bộ, phân loại cán bộ, nâng lương - thăng cấp bậc hàm, "
                       "đơn thư - khiếu nại. Hoạt động hoàn toàn ngoại tuyến, dữ liệu lưu trữ cục bộ "

@@ -99,7 +99,7 @@ class Panel(ttk.Frame):
         top.pack(fill="x")
         ttk.Label(top, text="Danh sách chi tiết phân loại", style="CardTitle.TLabel").pack(side="left")
         ttk.Label(top, textvariable=self.count_var, style="CardMuted.TLabel").pack(side="right")
-        tk.Frame(card, height=2, width=44, bg=C["gold"]).pack(anchor="w", pady=(4, 10))
+        tk.Frame(card, height=1, bg=C["border"]).pack(fill="x", pady=(10, 12))
 
         bar = ttk.Frame(card, style="Card.TFrame")
         bar.pack(fill="x", pady=(0, 4))
@@ -132,7 +132,7 @@ class Panel(ttk.Frame):
         lo, card = make_card(parent, padding=16)
         lo.pack(fill="both", expand=True)
         ttk.Label(card, text="Bảng tổng hợp xếp loại theo kỳ", style="CardTitle.TLabel").pack(anchor="w")
-        tk.Frame(card, height=2, width=44, bg=C["gold"]).pack(anchor="w", pady=(4, 10))
+        tk.Frame(card, height=1, bg=C["border"]).pack(fill="x", pady=(10, 12))
 
         bar = ttk.Frame(card, style="Card.TFrame")
         bar.pack(fill="x", pady=(0, 6))
@@ -283,10 +283,12 @@ class Panel(ttk.Frame):
         AdvancedSearchDialog(self)
 
     def apply_advanced(self, filters):
+        # Xóa ô tìm kiếm thường TRƯỚC: lệnh này kích hoạt _on_simple_search_typed,
+        # vốn xóa bộ lọc nâng cao - nếu gọi sau thì bộ lọc vừa áp bị mất ngay.
+        self.search_var.set("")
         self.adv_filters = filters
         self.adv_note.set(f"Đang áp dụng tìm kiếm nâng cao ({len(filters)} tiêu chí) — "
                           "gõ vào ô tìm kiếm thường để bỏ lọc này.")
-        self.search_var.set("")
         self.refresh()
 
     def _rows(self):
