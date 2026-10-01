@@ -26,6 +26,7 @@ BUSINESS_MODULES = [
     ("employees", "Thông tin cán bộ", "👤", "modules.employees", "Panel"),
     ("classification", "Phân loại cán bộ", "🏆", "modules.classification", "Panel"),
     ("salary", "Nâng lương - Thăng cấp", "📈", "modules.salary", "Panel"),
+    ("titles", "Chức danh", "🎖", "modules.titles", "Panel"),
     ("complaints", "Đơn thư - Khiếu nại", "📮", "modules.complaints", "Panel"),
 ]
 

@@ -159,7 +159,7 @@ class EntryDialog(FormDialog):
         self.t_nd = text_edit(r.get("noi_dung"), 70)
         self.e_note = QLineEdit(r.get("ghi_chu") or "")
         self.file = FilePicker(attachments.display_name(r.get("file_dinh_kem")))
-        self.sync = QCheckBox("Cập nhật cấp bậc và hệ số lương hiện tại của cán bộ theo quyết định này")
+        self.sync = QCheckBox("Cập nhật cấp bậc và hệ số lương vào hồ sơ cán bộ")
         self.sync.setChecked(row is None)
         if not panel.app.can("employees", "edit"):
             # Đồng bộ ghi vào hồ sơ cán bộ nên cần quyền Sửa ở module Thông tin cán bộ.

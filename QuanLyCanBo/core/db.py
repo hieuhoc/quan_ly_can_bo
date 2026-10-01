@@ -207,6 +207,18 @@ class Database:
                 self.conn.execute(f"ALTER TABLE can_bo ADD COLUMN {col} TEXT")
         if "ly_do_ngoai_le" not in self._cols("qua_trinh_luong"):
             self.conn.execute("ALTER TABLE qua_trinh_luong ADD COLUMN ly_do_ngoai_le TEXT")
+        # v4.3: quyết định về chức danh (bổ nhiệm, bổ nhiệm lại, miễn nhiệm...)
+        self.conn.execute(
+            """CREATE TABLE IF NOT EXISTS qua_trinh_chuc_danh (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                can_bo_id INTEGER NOT NULL REFERENCES can_bo(id) ON DELETE CASCADE,
+                loai TEXT NOT NULL,              -- hình thức: Bổ nhiệm / Bổ nhiệm lại / Miễn nhiệm...
+                ngay_quyet_dinh TEXT, so_quyet_dinh TEXT, nguoi_ky TEXT,
+                chuc_danh TEXT NOT NULL,
+                thoi_han_nam TEXT,               -- thời hạn giữ chức danh (năm), trống = không thời hạn
+                ly_do_ngoai_le TEXT, noi_dung TEXT, ghi_chu TEXT, file_dinh_kem TEXT,
+                created_at TEXT DEFAULT (datetime('now','localtime')), created_by TEXT
+            )""")
         # v4.2: ngoại lệ cảnh báo đến hạn (dời hạn / không nhắc) - bắt buộc có lý do
         self.conn.execute(
             """CREATE TABLE IF NOT EXISTS ngoai_le_canh_bao (

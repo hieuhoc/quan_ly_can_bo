@@ -36,7 +36,7 @@ class Page(ListPage):
 
     def __init__(self, app):
         super().__init__(app, "Cảnh báo đến hạn", COLS, advanced=False,
-                         subtitle="Xét thăng cấp bậc hàm, nâng lương, nghỉ hưu, chuyển Đảng chính thức - "
+                         subtitle="Xét thăng cấp bậc hàm, nâng lương, nghỉ hưu, chuyển Đảng chính thức, hết hạn chức danh - "
                                   "niên hạn và thời gian báo trước chỉnh tại Tham số nghiệp vụ")
         self.tab = "alerts"
         self.tabs = TabBar(TABS)

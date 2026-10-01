@@ -16,7 +16,7 @@ from ui.theme import draw_shield
 from ui.widgets import FormDialog, button, info, label
 
 APP_TITLE = "QUẢN LÝ CÁN BỘ"
-VERSION = "4.2"
+VERSION = "4.3"
 BACKUP_INTERVAL_MIN = 30
 IDLE_TIMEOUT_MIN = 15
 ROLES = {"admin": "Quản trị viên", "user": "Người dùng"}

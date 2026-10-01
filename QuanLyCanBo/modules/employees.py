@@ -42,7 +42,7 @@ SECTIONS = [
     ("Chức vụ - Đơn vị", [
         ("cap_bac", "Cấp bậc", "rank"),
         ("chuc_vu", "Chức vụ", "position"),
-        ("chuc_danh_hien_tai", "Chức danh hiện tại", "text"),
+        ("chuc_danh_hien_tai", "Chức danh hiện tại", "title"),
         # Đơn vị theo cơ cấu: Công an tỉnh -> Phòng / CA xã, phường -> Đội / Tổ
         ("cong_an_tinh", "Công an tỉnh / thành phố", "ca_tinh"),
         ("don_vi", "Phòng / Công an xã, phường", "ca_donvi"),
@@ -605,6 +605,8 @@ class EmployeeDialog(FormDialog):
             return SuggestCombo(ts.get("chuc_vu_goi_y"), text=val)
         if kind == "salary":
             return SuggestCombo(ts.he_so_goi_y(), text=val)
+        if kind == "title":
+            return SuggestCombo(ts.get("chuc_danh_goi_y"), text=val)
         if kind == "ca_tinh":
             if val:
                 self.unit.tinh.setText(val)
@@ -827,9 +829,10 @@ class DeleteEmployeeDialog(FormDialog):
         # File đính kèm của các quyết định nâng lương - thăng cấp bị xóa theo cán bộ
         # (xóa dây chuyền trong CSDL) - dọn luôn file để không bỏ lại file rác.
         # Ảnh thẻ được giữ lại cùng bản lưu hồ sơ đã xóa.
-        for f in self.db.conn.execute("SELECT file_dinh_kem FROM qua_trinh_luong WHERE can_bo_id=? "
-                                      "AND file_dinh_kem IS NOT NULL AND file_dinh_kem<>''", (self.row["id"],)):
-            attachments.delete_attachment(app.app_dir, f["file_dinh_kem"])
+        for tbl in ("qua_trinh_luong", "qua_trinh_chuc_danh"):
+            for f in self.db.conn.execute(f"SELECT file_dinh_kem FROM {tbl} WHERE can_bo_id=? "
+                                          "AND file_dinh_kem IS NOT NULL AND file_dinh_kem<>''", (self.row["id"],)):
+                attachments.delete_attachment(app.app_dir, f["file_dinh_kem"])
         self.db.delete(TABLE, self.row["id"])
         self.db.log(app.user["username"], "Xóa cán bộ", f"{self.row['ma_cb']} - {self.row['ho_ten']} ({detail})")
         app.set_status("Đã xóa cán bộ khỏi danh sách.")

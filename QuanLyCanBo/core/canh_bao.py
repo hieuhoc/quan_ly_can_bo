@@ -6,6 +6,7 @@ Tính cảnh báo đến hạn cho từng cán bộ, theo tham số nghiệp v�
   nang_luong Xét nâng lương          = ngày QĐ nâng lương / thăng cấp gần nhất + chu kỳ nâng lương
   nghi_huu   Nghỉ hưu (hết hạn tuổi) = ngày sinh + hạn tuổi theo cấp bậc và giới tính
   dang       Chuyển Đảng chính thức  = ngày vào Đảng + thời gian dự bị (khi chưa có ngày chính thức)
+  chuc_danh  Hết hạn giữ chức danh   = ngày QĐ bổ nhiệm chức danh hiện tại + thời hạn ghi trong QĐ
 
 Mỗi loại được báo "Sắp đến hạn" khi còn trong khoảng báo trước (tham số) và
 "Quá hạn" khi đã qua ngày. Cán bộ thiếu dữ liệu để tính (chưa có ngày sinh, chưa
@@ -24,6 +25,7 @@ LOAI = {
     "nang_luong": "Xét nâng lương",
     "nghi_huu": "Nghỉ hưu (hết hạn tuổi phục vụ)",
     "dang": "Chuyển Đảng chính thức",
+    "chuc_danh": "Hết thời hạn giữ chức danh",
 }
 QUA_HAN, SAP_DEN, THIEU = "Quá hạn", "Sắp đến hạn", "Thiếu dữ liệu"
 FMT = "%d/%m/%Y"
@@ -56,6 +58,16 @@ def _latest_decisions(db):
     return out
 
 
+def _title_decisions(db):
+    """{can_bo_id: [(ngày, chức danh, thời hạn năm, hình thức), ...]}"""
+    out = {}
+    for r in db.conn.execute("SELECT can_bo_id, ngay_quyet_dinh, chuc_danh, thoi_han_nam, loai FROM qua_trinh_chuc_danh"):
+        d = parse(r["ngay_quyet_dinh"])
+        if d:
+            out.setdefault(r["can_bo_id"], []).append((d, r["chuc_danh"] or "", r["thoi_han_nam"], r["loai"]))
+    return out
+
+
 def exceptions(db):
     return {(r["can_bo_id"], r["loai"]): dict(r) for r in db.conn.execute("SELECT * FROM ngoai_le_canh_bao")}
 
@@ -64,11 +76,14 @@ def compute(db, today=None):
     """Trả về (danh_sách_cảnh_báo, danh_sách_thiếu_dữ_liệu, danh_sách_ngoại_lệ)."""
     today = today or datetime.date.today()
     decisions = _latest_decisions(db)
+    titles = _title_decisions(db)
+    mien = set(ts.get("hinh_thuc_chuc_danh_mien"))
     exc = exceptions(db)
     chu_ky = ts.as_int("chu_ky_nang_luong")
     du_bi = ts.as_int("thoi_gian_du_bi_dang")
     bao_truoc = {"thang_cap": ts.as_int("bao_truoc_thang_cap"), "nang_luong": ts.as_int("bao_truoc_thang_cap"),
-                 "nghi_huu": ts.as_int("bao_truoc_nghi_huu"), "dang": ts.as_int("bao_truoc_dang")}
+                 "nghi_huu": ts.as_int("bao_truoc_nghi_huu"), "dang": ts.as_int("bao_truoc_dang"),
+                 "chuc_danh": ts.as_int("bao_truoc_chuc_danh")}
     alerts, missing, excepted = [], [], []
 
     for cb in db.conn.execute("SELECT * FROM can_bo ORDER BY ho_ten COLLATE NOCASE"):
@@ -102,6 +117,22 @@ def compute(db, today=None):
         vd = parse(cb["ngay_vao_dang"])
         if vd and not (cb["ngay_chuyen_dang_chinh_thuc"] or "").strip():
             items.append(("dang", add_months(vd, du_bi), f"Vào Đảng {vd:%d/%m/%Y}, dự bị {du_bi} tháng"))
+
+        cd = (cb.get("chuc_danh_hien_tai") or "").strip()
+        if cd:
+            qd = sorted([t for t in titles.get(cb["id"], []) if t[1].strip().lower() == cd.lower()
+                         and t[3] not in mien], reverse=True)
+            if qd:
+                d, _cd, han_nam, _loai = qd[0]
+                try:
+                    years = float(str(han_nam).replace(",", ".")) if han_nam not in (None, "") else 0
+                except ValueError:
+                    years = 0
+                if years > 0:
+                    items.append(("chuc_danh", add_years(d, years),
+                                  f"{cd}: thời hạn {years:g} năm từ QĐ {d:%d/%m/%Y}"))
+            else:
+                items.append(("chuc_danh", None, f"Chưa có quyết định bổ nhiệm chức danh {cd}"))
 
         for loai, han, chi_tiet in items:
             row = dict(base, loai=loai, loai_text=LOAI[loai], chi_tiet=chi_tiet, ngoai_le="")
